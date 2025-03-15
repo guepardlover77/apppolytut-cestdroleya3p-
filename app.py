@@ -6,107 +6,96 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- Configuration de Google Sheets ---
-scopes = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
-# Charger les identifiants Google Sheets
-creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+# Authentification avec les secrets Streamlit
+creds = Credentials.from_service_account_info(st.secrets["google_sheets"], scopes=scopes)
 client = gspread.authorize(creds)
-sheet = client.open("1").sheet1
+sheet = client.open("1").sheet1  # Remplacez par le nom réel de votre fichier
 
-
-# --- Fonction d'authentification ---
+# --- Authentification ---
 def verifier_identifiants(utilisateur, mot_de_passe):
-    """Vérifie si les identifiants sont corrects."""
     utilisateurs = st.secrets["credentials"]
     return utilisateurs.get(utilisateur) == mot_de_passe
 
-
-# --- Interface de connexion ---
+# Vérifier si l'utilisateur est connecté
 if "authentifie" not in st.session_state:
     st.session_state.authentifie = False
 
 if not st.session_state.authentifie:
-    st.title("🔑 Connexion requise")
+    st.title("🔑 Connexion")
 
     utilisateur = st.text_input("👤 Identifiant")
     mot_de_passe = st.text_input("🔒 Mot de passe", type="password")
-    connexion_bouton = st.button("Se connecter")
-
-    if connexion_bouton:
+    if st.button("Se connecter"):
         if verifier_identifiants(utilisateur, mot_de_passe):
             st.session_state.authentifie = True
             st.success("✅ Connexion réussie !")
-            st.rerun()  # Recharge la page après connexion
+            st.experimental_rerun()
         else:
-            st.error("❌ Identifiants incorrects. Veuillez réessayer.")
+            st.error("❌ Identifiants incorrects")
 
-    st.stop()  # Arrête l'exécution ici si non authentifié
+    st.stop()
 
-# --- Interface principale après connexion ---
-st.title("📚 Gestion des polys - CREM")
+# --- Interface principale ---
+st.title("📚 Gestion des cours - Association Étudiante")
 
 # Bouton de déconnexion
 if st.button("🚪 Se déconnecter"):
     st.session_state.authentifie = False
-    (st.rerun())
+    st.experimental_rerun()
 
-# Capture du QR code
+# Scanner un QR Code
 st.subheader("📷 Scanner un QR Code")
-img_file_buffer = st.camera_input("Scannez le QR code pour récupérer un numéro d'adhérent")
+img_file_buffer = st.camera_input("Scannez le QR code")
 
 if "numero_adherent" not in st.session_state:
     st.session_state.numero_adherent = None
 
-# Détection du QR Code
 if img_file_buffer is not None:
     file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, 1)
-
+    
     decoded_objs = decode(image)
     if decoded_objs:
         st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
-        st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+        st.success(f"✅ Numéro d'adhérent : {st.session_state.numero_adherent}")
     else:
-        st.error("❌ QR code non reconnu. Veuillez réessayer.")
+        st.error("❌ QR code non reconnu.")
 
-# Récupération des cours depuis Google Sheets
+# Récupérer les cours depuis Google Sheets
 st.subheader("📌 Sélectionner un cours")
-
 try:
     liste_cours = sheet.row_values(1)  # Récupère les intitulés de la première ligne
     if not liste_cours:
-        st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
+        st.error("⚠️ Aucun cours trouvé dans Google Sheets.")
 except Exception as e:
-    st.error(f"❌ Erreur lors de la récupération des cours : {e}")
+    st.error(f"❌ Erreur : {e}")
     liste_cours = []
 
 cours_selectionne = st.selectbox("📖 Choisissez un cours :", liste_cours)
 
-# Bouton de mise à jour
-if st.button("📤 Enregistrer la récupération du cours"):
+# Enregistrer la récupération du cours
+if st.button("📤 Enregistrer"):
     if st.session_state.numero_adherent is None:
-        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un QR code.")
+        st.error("❌ Aucun numéro d'adhérent détecté.")
     else:
         try:
-            # Recherche du numéro d'adhérent dans la feuille
             cellule = sheet.find(st.session_state.numero_adherent)
         except Exception as e:
-            st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
+            st.error(f"❌ Erreur lors de la recherche : {e}")
             cellule = None
-
+        
         if cellule:
             ligne = cellule.row
             if cours_selectionne in liste_cours:
-                colonne = liste_cours.index(cours_selectionne) + 1  # Index basé sur 1
+                colonne = liste_cours.index(cours_selectionne) + 1
                 try:
                     sheet.update_cell(ligne, colonne, 1)
-                    st.success("✅ Mise à jour réussie dans Google Sheets !")
+                    st.success("✅ Mise à jour réussie !")
                 except Exception as e:
-                    st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                    st.error(f"❌ Erreur : {e}")
             else:
-                st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+                st.error("⚠️ Le cours sélectionné n'existe pas.")
         else:
-            st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+            st.error("❌ Numéro d'adhérent non trouvé.")
