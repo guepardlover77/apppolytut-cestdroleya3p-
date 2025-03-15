@@ -6,7 +6,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 import json
 
-st.set_page_config(page_title="Gestion des polys - CREM", page_icon="📚", layout="wide")
 
 # --- Configuration de Google Sheets ---
 scopes = [
@@ -118,8 +117,16 @@ if st.button("📤 Enregistrer la récupération du cours"):
             if cours_selectionne in liste_cours:
                 colonne = liste_cours.index(cours_selectionne) + 1  # Index basé sur 1
                 try:
-                    sheet.update_cell(ligne, colonne, 1)
-                    st.success("✅ Mise à jour réussie dans Google Sheets !")
+                    # Vérifier si l'étudiant a déjà récupéré le poly
+                    current_value = sheet.cell(ligne, colonne).value
+
+                    # Si la cellule contient déjà une valeur ≥ 1
+                    if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
+                        st.error("❌ Cet étudiant a déjà récupéré ce poly.")
+                    else:
+                        # Sinon, mettre à jour la cellule
+                        sheet.update_cell(ligne, colonne, 1)
+                        st.success("✅ Mise à jour réussie dans Google Sheets !")
                 except Exception as e:
                     st.error(f"❌ Erreur lors de la mise à jour : {e}")
             else:
