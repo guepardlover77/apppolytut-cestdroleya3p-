@@ -1,7 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-from pyzbar.pyzbar import decode
+from pylibdmtx.pylibdmtx import decode  # Remplace pyzbar
 import gspread
 from google.oauth2.service_account import Credentials
 
