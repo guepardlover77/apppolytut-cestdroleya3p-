@@ -1,7 +1,8 @@
 streamlit
 opencv-python-headless
+streamlit
 numpy
 gspread
 pylibdmtx
 protobuf
-setuptools
+pyzbar
