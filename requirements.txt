@@ -4,4 +4,4 @@ numpy
 gspread
 pylibdmtx
 protobuf
-distutils
+setuptools
