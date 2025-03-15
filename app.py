@@ -68,14 +68,14 @@ if st.button("🚪 Se déconnecter"):
     st.session_state.authentifie = False
     (st.rerun())
 
-# Capture du QR code
-st.subheader("📷 Scanner un QR Code")
-img_file_buffer = st.camera_input("Scannez le QR code pour récupérer un numéro d'adhérent")
+# Capture du code-barres
+st.subheader("📷 Scanner un code-barres")
+img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
 
 if "numero_adherent" not in st.session_state:
     st.session_state.numero_adherent = None
 
-# Détection du QR Code
+# Détection du code-barres
 if img_file_buffer is not None:
     file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, 1)
@@ -85,7 +85,7 @@ if img_file_buffer is not None:
         st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
         st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
     else:
-        st.error("❌ QR code non reconnu. Veuillez réessayer.")
+        st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
 
 # Récupération des cours depuis Google Sheets
 st.subheader("📌 Sélectionner un cours")
@@ -103,7 +103,7 @@ cours_selectionne = st.selectbox("📖 Choisissez un cours :", liste_cours)
 # Bouton de mise à jour
 if st.button("📤 Enregistrer la récupération du cours"):
     if st.session_state.numero_adherent is None:
-        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un QR code.")
+        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
     else:
         try:
             # Recherche du numéro d'adhérent dans la feuille
