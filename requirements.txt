@@ -1,9 +1,6 @@
-streamlit
-opencv-python
-numpy
-pyzbar
-gspread
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-auth-python-oauthlib
+streamlit~=1.43.2
+opencv-python~=4.11.0.86
+numpy~=2.2.3
+gspread~=6.2.0
+pyzbar~=0.1.9
+protobuf~=5.29.3
