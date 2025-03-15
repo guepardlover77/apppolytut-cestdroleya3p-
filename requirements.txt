@@ -2,7 +2,7 @@ streamlit
 opencv-python-headless
 numpy
 gspread
-pyzbar
+pylibdmtx
 protobuf
 google-auth
 google-auth-oauthlib
