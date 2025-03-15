@@ -1,11 +1,6 @@
 streamlit
-opencv-python-headless
+opencv-python
 numpy
 gspread
 pylibdmtx
 protobuf
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-auth-python-oauthlib
-
