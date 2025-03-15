@@ -29,7 +29,7 @@ credentials = {
 
 creds = Credentials.from_service_account_info(credentials, scopes=scopes)
 client = gspread.authorize(creds)
-sheet = client.open(st.secrets["sheet_name"]).sheet1
+sheet = client.open("1").sheet1
 
 
 # --- Fonction d'authentification ---
