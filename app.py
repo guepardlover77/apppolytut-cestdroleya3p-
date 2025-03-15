@@ -5,6 +5,12 @@ from pyzbar.pyzbar import decode
 import gspread
 from google.oauth2.service_account import Credentials
 
+st.set_page_config(
+    page_title="CREM - Gestion des polys Tutorat",
+    page_icon="logo.png",
+    layout="wide"
+)
+
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 credentials = {
