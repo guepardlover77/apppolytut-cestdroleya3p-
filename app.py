@@ -47,12 +47,12 @@ def scan_barcode(image, night_mode=False):
     """Improved barcode detection with support for low light conditions"""
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
+
     # Apply low-light enhancement if night mode is enabled
     if night_mode:
         # Enhance brightness and contrast
         gray = enhance_for_low_light(gray, alpha=1.8, beta=30)
-        
+
         # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
@@ -68,7 +68,7 @@ def scan_barcode(image, night_mode=False):
 
     # Method 2: Adaptive threshold
     thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                  cv2.THRESH_BINARY, 13 if night_mode else 11, 5 if night_mode else 2)
+                                   cv2.THRESH_BINARY, 13 if night_mode else 11, 5 if night_mode else 2)
     results = decode(thresh)
     if results:
         return results, thresh
@@ -84,7 +84,7 @@ def scan_barcode(image, night_mode=False):
     dilated = cv2.dilate(blurred, kernel, iterations=2 if night_mode else 1)
     eroded = cv2.erode(dilated, kernel, iterations=1)
     results = decode(eroded)
-    
+
     return results, eroded if night_mode else blurred
 
 
@@ -117,16 +117,27 @@ if st.button("🚪 Se déconnecter"):
 st.subheader("📷 Scanner un code-barres")
 
 # Night mode toggle
-night_mode = st.checkbox("🌙 Mode faible luminosité", 
+night_mode = st.checkbox("🌙 Mode faible luminosité",
                          help="Activez cette option si vous êtes dans un environnement peu éclairé")
 
-img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
+# Create tabs for camera and file upload options
+scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
+
+with scan_tab:
+    img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
+    image_source = img_file_buffer
+
+with upload_tab:
+    uploaded_file = st.file_uploader("Importer une photo contenant un code-barres", 
+                                     type=['jpg', 'jpeg', 'png', 'bmp'])
+    image_source = uploaded_file
 
 if "numero_adherent" not in st.session_state:
     st.session_state.numero_adherent = None
 
-if img_file_buffer is not None:
-    file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
+# Process image from either source
+if image_source is not None:
+    file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, 1)
 
     # Use enhanced barcode scanning with night mode if enabled
@@ -135,17 +146,17 @@ if img_file_buffer is not None:
     if decoded_objs:
         st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
         st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
-        
+
         # Option to show processed image
         if st.checkbox("Afficher l'image traitée"):
             st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
     else:
         st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
         st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
-        
+
         # Show processed image in error case to help troubleshoot
         st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
-        
+
         if not night_mode:
             st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
 
