@@ -239,7 +239,7 @@ with tab1:
                              f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
 
 with tab2:
-    if not st.session_state.is_admin:
+    if st.session_state.username not in st.session_state.is_admin:
         st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
         st.info("Si tu n'es ni VP ni Sophie tu n'as pas accès à cette section.")
     else:
