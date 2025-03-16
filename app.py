@@ -549,17 +549,22 @@ with tab2:
 #pompompidou
 
 
-st.write(f"Connecté en tant que: **{st.session_state.username}**")
+user, logout, propos = st.columns(3)
 
-if st.button("Se déconnecter"):
-    log_activity(st.session_state.username, "Déconnexion", "", "Succès")
-    st.session_state.authentifie = False
-    st.session_state.username = None
-    st.session_state.is_admin = False
-    st.rerun()
-    
-with st.expander("À propos"):
-    st.write("### CREM - Gestion des polys Tutorat")
-    st.write("Version: 1.0.0")
-    st.write("Contact: web@crem.fr")
-    st.write("<3")
+with user:
+    st.write(f"Connecté en tant que: **{st.session_state.username}**")
+
+with logout:
+    if st.button("Se déconnecter"):
+        log_activity(st.session_state.username, "Déconnexion", "", "Succès")
+        st.session_state.authentifie = False
+        st.session_state.username = None
+        st.session_state.is_admin = False
+        st.rerun()
+
+with propos:
+    with st.expander("À propos"):
+        st.write("### CREM - Gestion des polys Tutorat")
+        st.write("Version: 1.0.0")
+        st.write("Contact: web@crem.fr")
+        st.write("<3")
