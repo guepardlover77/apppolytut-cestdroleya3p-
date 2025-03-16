@@ -36,10 +36,26 @@ def verifier_identifiants(utilisateur, mot_de_passe):
     return utilisateurs.get(utilisateur) == mot_de_passe
 
 
-def scan_barcode(image):
-    """Improved barcode detection using OpenCV preprocessing techniques"""
+def enhance_for_low_light(image, alpha=1.5, beta=10):
+    """Enhance image for low light conditions"""
+    # Adjust brightness and contrast
+    enhanced = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+    return enhanced
+
+
+def scan_barcode(image, night_mode=False):
+    """Improved barcode detection with support for low light conditions"""
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Apply low-light enhancement if night mode is enabled
+    if night_mode:
+        # Enhance brightness and contrast
+        gray = enhance_for_low_light(gray, alpha=1.8, beta=30)
+        
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
 
     # Try different preprocessing techniques
     results = None
@@ -48,28 +64,28 @@ def scan_barcode(image):
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     results = decode(blurred)
     if results:
-        return results
+        return results, blurred
 
     # Method 2: Adaptive threshold
     thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                  cv2.THRESH_BINARY, 11, 2)
+                                  cv2.THRESH_BINARY, 13 if night_mode else 11, 5 if night_mode else 2)
     results = decode(thresh)
     if results:
-        return results
+        return results, thresh
 
-    # Method 3: Edge enhancement
-    edges = cv2.Canny(blurred, 50, 200, apertureSize=3)
+    # Method 3: Edge enhancement with adjusted parameters for night mode
+    edges = cv2.Canny(blurred, 30 if night_mode else 50, 150 if night_mode else 200, apertureSize=3)
     results = decode(edges)
     if results:
-        return results
+        return results, edges
 
     # Method 4: Morphological operations
-    kernel = np.ones((3, 3), np.uint8)
-    dilated = cv2.dilate(blurred, kernel, iterations=1)
+    kernel = np.ones((5, 5) if night_mode else (3, 3), np.uint8)
+    dilated = cv2.dilate(blurred, kernel, iterations=2 if night_mode else 1)
     eroded = cv2.erode(dilated, kernel, iterations=1)
     results = decode(eroded)
-
-    return results
+    
+    return results, eroded if night_mode else blurred
 
 
 if "authentifie" not in st.session_state:
@@ -99,6 +115,11 @@ if st.button("🚪 Se déconnecter"):
     st.rerun()
 
 st.subheader("📷 Scanner un code-barres")
+
+# Night mode toggle
+night_mode = st.checkbox("🌙 Mode faible luminosité", 
+                         help="Activez cette option si vous êtes dans un environnement peu éclairé")
+
 img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
 
 if "numero_adherent" not in st.session_state:
@@ -108,18 +129,25 @@ if img_file_buffer is not None:
     file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, 1)
 
-    # Use enhanced barcode scanning
-    decoded_objs = scan_barcode(image)
+    # Use enhanced barcode scanning with night mode if enabled
+    decoded_objs, processed_img = scan_barcode(image, night_mode)
 
     if decoded_objs:
         st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
         st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
-
-        # Display processed image (optional - for debugging)
-        # st.image(thresh, caption="Image traitée", channels="GRAY")
+        
+        # Option to show processed image
+        if st.checkbox("Afficher l'image traitée"):
+            st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
     else:
         st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
         st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+        
+        # Show processed image in error case to help troubleshoot
+        st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
+        
+        if not night_mode:
+            st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
 
 st.subheader("📌 Sélectionner un cours")
 
