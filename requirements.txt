@@ -6,3 +6,4 @@ gspread
 pylibdmtx
 protobuf
 pyzbar
+pandas
