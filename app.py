@@ -7,9 +7,12 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 
+#pompompidou
+#j'ai testé un truc pour mettre en page automatiquement, ça a l'air pas mal
+
 st.set_page_config(
     page_title="CREM - Gestion des polys Tutorat",
-    page_icon="logo.png"
+    page_icon="logo.png" #logo du crem ou du tut ?
 )
 
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -31,17 +34,14 @@ creds = Credentials.from_service_account_info(credentials, scopes=scopes)
 client = gspread.authorize(creds)
 sheet = client.open("1").sheet1
 
-# Create or get activity log worksheet
 try:
     log_sheet = client.open("1").worksheet("Logs")
 except gspread.exceptions.WorksheetNotFound:
     log_sheet = client.open("1").add_worksheet(title="Logs", rows=1000, cols=6)
-    # Add headers if sheet is new
     log_sheet.append_row(["Date", "Heure", "Utilisateur", "Action", "Détails", "Statut"])
 
 
 def log_activity(username, action, details, status):
-    """Log user activity to track actions and errors"""
     now = datetime.datetime.now()
     date_str = now.strftime("%d/%m/%Y")
     time_str = now.strftime("%H:%M:%S")
@@ -57,49 +57,39 @@ def verifier_identifiants(utilisateur, mot_de_passe):
 
 
 def enhance_for_low_light(image, alpha=1.5, beta=10):
-    """Enhance image for low light conditions"""
-    # Adjust brightness and contrast
     enhanced = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
     return enhanced
 
 
 def scan_barcode(image, night_mode=False):
-    """Improved barcode detection with support for low light conditions"""
-    # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # Apply low-light enhancement if night mode is enabled
     if night_mode:
-        # Enhance brightness and contrast
         gray = enhance_for_low_light(gray, alpha=1.8, beta=30)
-
-        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
 
-    # Try different preprocessing techniques
     results = None
 
-    # Method 1: Basic blur and direct decode
+    #ethod 1: Basic blur and direct decode
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     results = decode(blurred)
     if results:
         return results, blurred
 
-    # Method 2: Adaptive threshold
+    #method 2: adaptive threshold
     thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                    cv2.THRESH_BINARY, 13 if night_mode else 11, 5 if night_mode else 2)
     results = decode(thresh)
     if results:
         return results, thresh
 
-    # Method 3: Edge enhancement with adjusted parameters for night mode
+    #method 3: edge enhancement with adjusted parameters for night mode
     edges = cv2.Canny(blurred, 30 if night_mode else 50, 150 if night_mode else 200, apertureSize=3)
     results = decode(edges)
     if results:
         return results, edges
 
-    # Method 4: Morphological operations
+    #method 4: morphological operations
     kernel = np.ones((5, 5) if night_mode else (3, 3), np.uint8)
     dilated = cv2.dilate(blurred, kernel, iterations=2 if night_mode else 1)
     eroded = cv2.erode(dilated, kernel, iterations=1)
@@ -108,7 +98,6 @@ def scan_barcode(image, night_mode=False):
     return results, eroded if night_mode else blurred
 
 
-# Authentication and user tracking
 if "authentifie" not in st.session_state:
     st.session_state.authentifie = False
     st.session_state.username = None
@@ -117,16 +106,15 @@ if "authentifie" not in st.session_state:
 if not st.session_state.authentifie:
     st.title("🔑 Connexion requise")
 
-    utilisateur = st.text_input("👤 Identifiant")
-    mot_de_passe = st.text_input("🔒 Mot de passe", type="password")
+    utilisateur = st.text_input("Identifiant")
+    mot_de_passe = st.text_input("Mot de passe", type="password")
     connexion_bouton = st.button("Se connecter")
 
     if connexion_bouton:
         if verifier_identifiants(utilisateur, mot_de_passe):
             st.session_state.authentifie = True
             st.session_state.username = utilisateur
-            # Set admin status (define admins in secrets or use a special username)
-            st.session_state.is_admin = "SirIsaac21"
+            st.session_state.is_admin = ["SirIsaac21", "vp_star", "star"]
             log_activity(utilisateur, "Connexion", "Connexion réussie", "Succès")
             st.success("✅ Connexion réussie !")
             st.rerun()
@@ -136,7 +124,6 @@ if not st.session_state.authentifie:
 
     st.stop()
 
-# Main application interface
 tab1, tab2 = st.tabs(["📚 Gestion des polys", "📊 Admin"])
 
 with tab1:
