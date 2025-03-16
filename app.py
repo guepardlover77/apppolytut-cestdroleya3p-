@@ -178,7 +178,7 @@ if st.session_state.username not in st.session_state.is_admin:
     #pompompidou
     
     try:
-        liste_cours = sheet.row_values(1)
+        liste_cours = sheet.row_values(2)
         if not liste_cours:
             st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
             log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
