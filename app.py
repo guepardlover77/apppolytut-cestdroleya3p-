@@ -250,36 +250,35 @@ with tab2:
         st.info("Si tu n'es ni VP ni Sophie tu n'as pas accès à cette section.")
     else:
         st.success("👑 Bravo, t'es admin ! Sophie t'a adoubé ?")
-        with st.expander("Sauvegarde des données", expanded=False):
-            backup_cols = st.columns(2)
-            with backup_cols[0]:
-                if st.button("Télécharger toutes les données (CSV)"):
-                    try:
-                        all_data = sheet.get_all_records()
-                        df = pd.DataFrame(all_data)
-                        st.download_button(
-                            "Confirmer le téléchargement",
-                            data=df.to_csv(index=False).encode('utf-8'),
-                            file_name=f"CREM_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
-                        )
-                        log_activity(st.session_state.username, "Export données", "Téléchargement CSV", "Succès")
-                    except Exception as e:
-                        st.error(f"Erreur d'export: {e}")
+        backup_cols = st.columns(2)
+        with backup_cols[0]:
+            if st.button("Télécharger toutes les données (CSV)"):
+                try:
+                    all_data = sheet.get_all_records()
+                    df = pd.DataFrame(all_data)
+                    st.download_button(
+                        "Confirmer le téléchargement",
+                        data=df.to_csv(index=False).encode('utf-8'),
+                        file_name=f"CREM_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                    log_activity(st.session_state.username, "Export données", "Téléchargement CSV", "Succès")
+                except Exception as e:
+                    st.error(f"Erreur d'export: {e}")
 
-            with backup_cols[1]:
-                if st.button("Télécharger les journaux d'activité"):
-                    try:
-                        all_logs = log_sheet.get_all_records()
-                        df_logs = pd.DataFrame(all_logs)
-                        st.download_button(
-                            "Confirmer le téléchargement",
-                            data=df_logs.to_csv(index=False).encode('utf-8'),
-                            file_name=f"CREM_logs_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
-                        )
-                    except Exception as e:
-                        st.error(f"Erreur d'export: {e}")
+        with backup_cols[1]:
+            if st.button("Télécharger les journaux d'activité"):
+                try:
+                    all_logs = log_sheet.get_all_records()
+                    df_logs = pd.DataFrame(all_logs)
+                    st.download_button(
+                        "Confirmer le téléchargement",
+                        data=df_logs.to_csv(index=False).encode('utf-8'),
+                        file_name=f"CREM_logs_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                except Exception as e:
+                    st.error(f"Erreur d'export: {e}")
 
         with st.expander("À propos"):
             st.write("### CREM - Gestion des polys Tutorat")
