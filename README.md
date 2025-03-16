@@ -41,11 +41,6 @@ Pour lancer l'application:
 streamlit run app.py
 ```
 
-## Technologies
-- Streamlit pour l'interface utilisateur
-- Google Sheets API pour le stockage des données
-- Pandas pour la manipulation des données
-
 ## Auteur
 Mathéo Milley-Arjaliès, CREMeux
 
