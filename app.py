@@ -32,9 +32,44 @@ sheet = client.open("1").sheet1
 
 
 def verifier_identifiants(utilisateur, mot_de_passe):
-    """Vérifie si les identifiants sont corrects."""
     utilisateurs = st.secrets["credentials"]
     return utilisateurs.get(utilisateur) == mot_de_passe
+
+
+def scan_barcode(image):
+    """Improved barcode detection using OpenCV preprocessing techniques"""
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Try different preprocessing techniques
+    results = None
+
+    # Method 1: Basic blur and direct decode
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    results = decode(blurred)
+    if results:
+        return results
+
+    # Method 2: Adaptive threshold
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                  cv2.THRESH_BINARY, 11, 2)
+    results = decode(thresh)
+    if results:
+        return results
+
+    # Method 3: Edge enhancement
+    edges = cv2.Canny(blurred, 50, 200, apertureSize=3)
+    results = decode(edges)
+    if results:
+        return results
+
+    # Method 4: Morphological operations
+    kernel = np.ones((3, 3), np.uint8)
+    dilated = cv2.dilate(blurred, kernel, iterations=1)
+    eroded = cv2.erode(dilated, kernel, iterations=1)
+    results = decode(eroded)
+
+    return results
 
 
 if "authentifie" not in st.session_state:
@@ -61,10 +96,10 @@ st.title("📚 Gestion des polys - CREM")
 
 if st.button("🚪 Se déconnecter"):
     st.session_state.authentifie = False
-    (st.rerun())
+    st.rerun()
 
-st.subheader("📷 Scanner un QR Code")
-img_file_buffer = st.camera_input("Scannez le QR code pour récupérer un numéro d'adhérent")
+st.subheader("📷 Scanner un code-barres")
+img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
 
 if "numero_adherent" not in st.session_state:
     st.session_state.numero_adherent = None
@@ -73,12 +108,18 @@ if img_file_buffer is not None:
     file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, 1)
 
-    decoded_objs = decode(image)
+    # Use enhanced barcode scanning
+    decoded_objs = scan_barcode(image)
+
     if decoded_objs:
         st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
         st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+
+        # Display processed image (optional - for debugging)
+        # st.image(thresh, caption="Image traitée", channels="GRAY")
     else:
-        st.error("❌ QR code non reconnu. Veuillez réessayer.")
+        st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+        st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
 
 st.subheader("📌 Sélectionner un cours")
 
@@ -94,7 +135,7 @@ cours_selectionne = st.selectbox("📖 Choisissez un cours :", liste_cours)
 
 if st.button("📤 Enregistrer la récupération du cours"):
     if st.session_state.numero_adherent is None:
-        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un QR code.")
+        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
     else:
         try:
             cellule = sheet.find(st.session_state.numero_adherent)
