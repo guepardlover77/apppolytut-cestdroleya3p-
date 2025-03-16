@@ -125,119 +125,231 @@ if not st.session_state.authentifie:
 
     st.stop()
 
-tab1, tab2 = st.tabs(["📚 Gestion des polys", "📊 Admin"])
+if st.session_state.username not in st.session_state.is_admin:
 
-with tab1:
-    #st.title("📚 Gestion des polys - CREM")
+#st.title("📚 Gestion des polys - CREM")
 
-    st.subheader("1. Scanner un code-barres")
+st.subheader("1. Scanner un code-barres")
 
-    night_mode = st.checkbox("Mode faible luminosité",
-                             help="Activez cette option si vous êtes dans un environnement peu éclairé")
+night_mode = st.checkbox("Mode faible luminosité",
+                         help="Activez cette option si vous êtes dans un environnement peu éclairé")
 
-    scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
+scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
 
-    
-    with scan_tab:
-        img_file_buffer = st.camera_input("Take a picture")
-        image_source = img_file_buffer
 
-    with upload_tab:
-        uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
-                                         type=['jpg', 'jpeg', 'png', 'bmp'])
-        image_source = uploaded_file
+with scan_tab:
+    img_file_buffer = st.camera_input("Take a picture")
+    image_source = img_file_buffer
 
-    if "numero_adherent" not in st.session_state:
-        st.session_state.numero_adherent = None
+with upload_tab:
+    uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
+                                     type=['jpg', 'jpeg', 'png', 'bmp'])
+    image_source = uploaded_file
 
-    if image_source is not None:
-        file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, 1)
-        decoded_objs, processed_img = scan_barcode(image, night_mode)
+if "numero_adherent" not in st.session_state:
+    st.session_state.numero_adherent = None
 
-        if decoded_objs:
-            st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
-            st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
-            log_activity(st.session_state.username, "Scan de code-barres",
-                         f"ID: {st.session_state.numero_adherent}", "Succès")
+if image_source is not None:
+    file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
+    image = cv2.imdecode(file_bytes, 1)
+    decoded_objs, processed_img = scan_barcode(image, night_mode)
 
-            if st.checkbox("Afficher l'image traitée"):
-                st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
-        else:
-            st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
-            st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
-            log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
+    if decoded_objs:
+        st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
+        st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+        log_activity(st.session_state.username, "Scan de code-barres",
+                     f"ID: {st.session_state.numero_adherent}", "Succès")
 
-            st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
+        if st.checkbox("Afficher l'image traitée"):
+            st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
+    else:
+        st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+        st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+        log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
 
-            if not night_mode:
-                st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
+        st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
 
-    st.write("-------------------------------------------------------------------------------------------------------------------------")
+        if not night_mode:
+            st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
 
-    st.subheader("2. Sélectionner un cours")
+st.write("-------------------------------------------------------------------------------------------------------------------------")
+
+st.subheader("2. Sélectionner un cours")
 #pompompidou
 
-    try:
-        liste_cours = sheet.row_values(1)
-        if not liste_cours:
-            st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
-            log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
-    except Exception as e:
-        st.error(f"❌ Erreur lors de la récupération des cours : {e}")
-        log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
-        liste_cours = []
+try:
+    liste_cours = sheet.row_values(1)
+    if not liste_cours:
+        st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
+        log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
+except Exception as e:
+    st.error(f"❌ Erreur lors de la récupération des cours : {e}")
+    log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
+    liste_cours = []
 
-    cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
+cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
 
-    if st.button("Enregistrer la récupération du cours"):
-        if st.session_state.numero_adherent is None:
-            st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
-            log_activity(st.session_state.username, "Enregistrement poly",
-                         f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
-        else:
-            try:
-                cellule = sheet.find(st.session_state.numero_adherent)
-            except Exception as e:
-                st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
-                log_activity(st.session_state.username, "Recherche adhérent",
-                             f"ID: {st.session_state.numero_adherent}, Erreur: {str(e)}", "Échec")
-                cellule = None
+if st.button("Enregistrer la récupération du cours"):
+    if st.session_state.numero_adherent is None:
+        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
+        log_activity(st.session_state.username, "Enregistrement poly",
+                     f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
+    else:
+        try:
+            cellule = sheet.find(st.session_state.numero_adherent)
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
+            log_activity(st.session_state.username, "Recherche adhérent",
+                         f"ID: {st.session_state.numero_adherent}, Erreur: {str(e)}", "Échec")
+            cellule = None
 
-            if cellule:
-                ligne = cellule.row
-                if cours_selectionne in liste_cours:
-                    colonne = liste_cours.index(cours_selectionne) + 1
-                    try:
-                        current_value = sheet.cell(ligne, colonne).value
+        if cellule:
+            ligne = cellule.row
+            if cours_selectionne in liste_cours:
+                colonne = liste_cours.index(cours_selectionne) + 1
+                try:
+                    current_value = sheet.cell(ligne, colonne).value
 
-                        if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
-                            st.error("❌ Cet étudiant a déjà récupéré ce poly.")
-                            log_activity(st.session_state.username, "Enregistrement poly",
-                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Déjà récupéré",
-                                         "Échec")
-                        else:
-                            sheet.update_cell(ligne, colonne, 1)
-                            st.success("✅ Mise à jour réussie dans Google Sheets !")
-                            log_activity(st.session_state.username, "Enregistrement poly",
-                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
-                                         "Succès")
-                            #pompompidou
-                    except Exception as e:
-                        st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                    if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
+                        st.error("❌ Cet étudiant a déjà récupéré ce poly.")
                         log_activity(st.session_state.username, "Enregistrement poly",
-                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Erreur: {str(e)}",
+                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Déjà récupéré",
                                      "Échec")
-                else:
-                    st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+                    else:
+                        sheet.update_cell(ligne, colonne, 1)
+                        st.success("✅ Mise à jour réussie dans Google Sheets !")
+                        log_activity(st.session_state.username, "Enregistrement poly",
+                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
+                                     "Succès")
+                        #pompompidou
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de la mise à jour : {e}")
                     log_activity(st.session_state.username, "Enregistrement poly",
-                                 f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne} inexistant",
+                                 f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Erreur: {str(e)}",
                                  "Échec")
             else:
-                st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+                st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
                 log_activity(st.session_state.username, "Enregistrement poly",
-                             f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
+                             f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne} inexistant",
+                             "Échec")
+        else:
+            st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+            log_activity(st.session_state.username, "Enregistrement poly",
+                         f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
+
+
 if st.session_state.username in st.session_state.is_admin:
+    tab1, tab2 = st.tabs(2)
+    with tab1:
+        
+        st.subheader("1. Scanner un code-barres")
+        
+        night_mode = st.checkbox("Mode faible luminosité",
+                                 help="Activez cette option si vous êtes dans un environnement peu éclairé")
+        
+        scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
+        
+        
+        with scan_tab:
+            img_file_buffer = st.camera_input("Take a picture")
+            image_source = img_file_buffer
+        
+        with upload_tab:
+            uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
+                                             type=['jpg', 'jpeg', 'png', 'bmp'])
+            image_source = uploaded_file
+        
+        if "numero_adherent" not in st.session_state:
+            st.session_state.numero_adherent = None
+        
+        if image_source is not None:
+            file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
+            image = cv2.imdecode(file_bytes, 1)
+            decoded_objs, processed_img = scan_barcode(image, night_mode)
+        
+            if decoded_objs:
+                st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
+                st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+                log_activity(st.session_state.username, "Scan de code-barres",
+                             f"ID: {st.session_state.numero_adherent}", "Succès")
+        
+                if st.checkbox("Afficher l'image traitée"):
+                    st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
+            else:
+                st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+                st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+                log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
+        
+                st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
+        
+                if not night_mode:
+                    st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
+        
+        st.write("-------------------------------------------------------------------------------------------------------------------------")
+        
+        st.subheader("2. Sélectionner un cours")
+        #pompompidou
+        
+        try:
+            liste_cours = sheet.row_values(1)
+            if not liste_cours:
+                st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
+                log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la récupération des cours : {e}")
+            log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
+            liste_cours = []
+        
+        cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
+        
+        if st.button("Enregistrer la récupération du cours"):
+            if st.session_state.numero_adherent is None:
+                st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
+                log_activity(st.session_state.username, "Enregistrement poly",
+                             f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
+            else:
+                try:
+                    cellule = sheet.find(st.session_state.numero_adherent)
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
+                    log_activity(st.session_state.username, "Recherche adhérent",
+                                 f"ID: {st.session_state.numero_adherent}, Erreur: {str(e)}", "Échec")
+                    cellule = None
+        
+                if cellule:
+                    ligne = cellule.row
+                    if cours_selectionne in liste_cours:
+                        colonne = liste_cours.index(cours_selectionne) + 1
+                        try:
+                            current_value = sheet.cell(ligne, colonne).value
+        
+                            if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
+                                st.error("❌ Cet étudiant a déjà récupéré ce poly.")
+                                log_activity(st.session_state.username, "Enregistrement poly",
+                                             f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Déjà récupéré",
+                                             "Échec")
+                            else:
+                                sheet.update_cell(ligne, colonne, 1)
+                                st.success("✅ Mise à jour réussie dans Google Sheets !")
+                                log_activity(st.session_state.username, "Enregistrement poly",
+                                             f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
+                                             "Succès")
+                                #pompompidou
+                        except Exception as e:
+                            st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                            log_activity(st.session_state.username, "Enregistrement poly",
+                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Erreur: {str(e)}",
+                                         "Échec")
+                    else:
+                        st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+                        log_activity(st.session_state.username, "Enregistrement poly",
+                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne} inexistant",
+                                     "Échec")
+                else:
+                    st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+                    log_activity(st.session_state.username, "Enregistrement poly",
+                                 f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
+        
     with tab2:
         if st.session_state.username not in st.session_state.is_admin:
             st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
