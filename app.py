@@ -302,6 +302,8 @@ with tab2:
                     st.metric("Total de polys distribués", total_polys)
 
                 with nbreussite:
+                    all_logs = log_sheet.get_all_records()
+
                     success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
                     failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
                     total_actions = len(all_logs)
