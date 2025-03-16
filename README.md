@@ -47,7 +47,7 @@ streamlit run app.py
 - Pandas pour la manipulation des données
 
 ## Auteur
-Mathéo Milley-Arjaliès, Webmaster au CREM, référent SHS au Tutorat
+Mathéo Milley-Arjaliès, CREMeux
 
 ## Contact
 - [web@crem.fr](MAILTO:web@crem.fr)
