@@ -138,7 +138,8 @@ if st.session_state.username not in st.session_state.is_admin:
     
     
     with scan_tab:
-        img_file_buffer = st.camera_input("Take a picture")
+        st.write("Préparez-vous, j'ai pas trouvé comment mettre la caméra arrière par défaut")
+        img_file_buffer = st.camera_input("Prendre la photo")
         image_source = img_file_buffer
     
     with upload_tab:
