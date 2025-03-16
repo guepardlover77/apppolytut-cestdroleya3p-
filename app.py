@@ -9,8 +9,7 @@ import datetime
 
 st.set_page_config(
     page_title="CREM - Gestion des polys Tutorat",
-    page_icon="logo.png",
-    layout="wide"
+    page_icon="logo.png"
 )
 
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
