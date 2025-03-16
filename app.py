@@ -126,7 +126,7 @@ if not st.session_state.authentifie:
     st.stop()
 
 if st.session_state.username not in st.session_state.is_admin:
-
+    st.header(f"Coucou **{st.session_state.username}**"
 #st.title("📚 Gestion des polys - CREM")
 
     st.subheader("1. Scanner un code-barres")
@@ -666,7 +666,6 @@ st.write("----------------------------------------------------------------------
 user, propos = st.columns(2)
 
 with user:
-    st.write(f"Connecté en tant que: **{st.session_state.username}**")
     if st.button("Se déconnecter"):
         log_activity(st.session_state.username, "Déconnexion", "", "Succès")
         st.session_state.authentifie = False
