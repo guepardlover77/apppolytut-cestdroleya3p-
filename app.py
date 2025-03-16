@@ -288,6 +288,19 @@ with tab2:
         with admin_tabs[0]:
             st.header("Tableau de bord")
             try:
+                all_data = sheet.get_all_records()
+                total_students = len(all_data)
+                total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
+            
+                st.metric("Total de LAS inscrits", total_students)
+                st.metric("Total de polys distribués", total_polys)
+                
+                course_counts = {}
+                for row in all_data:
+                    for course, val in row.items():
+                        if val == 1 and course != sheet.cell(1, 1).value:
+                            course_counts[course] = course_counts.get(course, 0) + 1
+            
                 if course_counts:
                     popular_course = max(course_counts.items(), key=lambda x: x[1])
                     st.metric("Poly le plus distribué", f"{popular_course[0]} ({popular_course[1]})")
