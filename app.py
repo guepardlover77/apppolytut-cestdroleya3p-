@@ -1,9 +1,11 @@
+import pandas as pd
 import streamlit as st
 import cv2
 import numpy as np
 from pyzbar.pyzbar import decode
 import gspread
 from google.oauth2.service_account import Credentials
+import datetime
 
 st.set_page_config(
     page_title="CREM - Gestion des polys Tutorat",
@@ -29,6 +31,25 @@ credentials = {
 creds = Credentials.from_service_account_info(credentials, scopes=scopes)
 client = gspread.authorize(creds)
 sheet = client.open("1").sheet1
+
+# Create or get activity log worksheet
+try:
+    log_sheet = client.open("1").worksheet("Logs")
+except gspread.exceptions.WorksheetNotFound:
+    log_sheet = client.open("1").add_worksheet(title="Logs", rows=1000, cols=6)
+    # Add headers if sheet is new
+    log_sheet.append_row(["Date", "Heure", "Utilisateur", "Action", "Détails", "Statut"])
+
+
+def log_activity(username, action, details, status):
+    """Log user activity to track actions and errors"""
+    now = datetime.datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    time_str = now.strftime("%H:%M:%S")
+    try:
+        log_sheet.append_row([date_str, time_str, username, action, details, status])
+    except Exception as e:
+        st.error(f"Erreur de journalisation: {e}")
 
 
 def verifier_identifiants(utilisateur, mot_de_passe):
@@ -88,8 +109,11 @@ def scan_barcode(image, night_mode=False):
     return results, eroded if night_mode else blurred
 
 
+# Authentication and user tracking
 if "authentifie" not in st.session_state:
     st.session_state.authentifie = False
+    st.session_state.username = None
+    st.session_state.is_admin = False
 
 if not st.session_state.authentifie:
     st.title("🔑 Connexion requise")
@@ -101,102 +125,508 @@ if not st.session_state.authentifie:
     if connexion_bouton:
         if verifier_identifiants(utilisateur, mot_de_passe):
             st.session_state.authentifie = True
+            st.session_state.username = utilisateur
+            # Set admin status (define admins in secrets or use a special username)
+            st.session_state.is_admin = "SirIsaac21"
+            log_activity(utilisateur, "Connexion", "Connexion réussie", "Succès")
             st.success("✅ Connexion réussie !")
             st.rerun()
         else:
+            log_activity(utilisateur, "Tentative de connexion", "Identifiants incorrects", "Échec")
             st.error("❌ Identifiants incorrects. Veuillez réessayer.")
 
     st.stop()
 
-st.title("📚 Gestion des polys - CREM")
+# Main application interface
+tab1, tab2 = st.tabs(["📚 Gestion des polys", "📊 Admin"])
 
-if st.button("🚪 Se déconnecter"):
-    st.session_state.authentifie = False
-    st.rerun()
+with tab1:
+    st.title("📚 Gestion des polys - CREM")
 
-st.subheader("📷 Scanner un code-barres")
+    st.write(f"👤 Connecté en tant que: **{st.session_state.username}**")
 
-# Night mode toggle
-night_mode = st.checkbox("🌙 Mode faible luminosité",
-                         help="Activez cette option si vous êtes dans un environnement peu éclairé")
+    if st.button("🚪 Se déconnecter"):
+        log_activity(st.session_state.username, "Déconnexion", "", "Succès")
+        st.session_state.authentifie = False
+        st.session_state.username = None
+        st.session_state.is_admin = False
+        st.rerun()
 
-# Create tabs for camera and file upload options
-scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
+    st.subheader("📷 Scanner un code-barres")
 
-with scan_tab:
-    img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
-    image_source = img_file_buffer
+    # Night mode toggle
+    night_mode = st.checkbox("🌙 Mode faible luminosité",
+                             help="Activez cette option si vous êtes dans un environnement peu éclairé")
 
-with upload_tab:
-    uploaded_file = st.file_uploader("Importer une photo contenant un code-barres", 
-                                     type=['jpg', 'jpeg', 'png', 'bmp'])
-    image_source = uploaded_file
+    # Create tabs for camera and file upload options
+    scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
 
-if "numero_adherent" not in st.session_state:
-    st.session_state.numero_adherent = None
+    with scan_tab:
+        img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
+        image_source = img_file_buffer
 
-# Process image from either source
-if image_source is not None:
-    file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, 1)
+    with upload_tab:
+        uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
+                                         type=['jpg', 'jpeg', 'png', 'bmp'])
+        image_source = uploaded_file
 
-    # Use enhanced barcode scanning with night mode if enabled
-    decoded_objs, processed_img = scan_barcode(image, night_mode)
+    if "numero_adherent" not in st.session_state:
+        st.session_state.numero_adherent = None
 
-    if decoded_objs:
-        st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
-        st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+    # Process image from either source
+    if image_source is not None:
+        file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, 1)
 
-        # Option to show processed image
-        if st.checkbox("Afficher l'image traitée"):
-            st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
-    else:
-        st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
-        st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+        # Use enhanced barcode scanning with night mode if enabled
+        decoded_objs, processed_img = scan_barcode(image, night_mode)
 
-        # Show processed image in error case to help troubleshoot
-        st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
+        if decoded_objs:
+            st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
+            st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+            log_activity(st.session_state.username, "Scan de code-barres",
+                         f"ID: {st.session_state.numero_adherent}", "Succès")
 
-        if not night_mode:
-            st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
-
-st.subheader("📌 Sélectionner un cours")
-
-try:
-    liste_cours = sheet.row_values(1)
-    if not liste_cours:
-        st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
-except Exception as e:
-    st.error(f"❌ Erreur lors de la récupération des cours : {e}")
-    liste_cours = []
-
-cours_selectionne = st.selectbox("📖 Choisissez un cours :", liste_cours)
-
-if st.button("📤 Enregistrer la récupération du cours"):
-    if st.session_state.numero_adherent is None:
-        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
-    else:
-        try:
-            cellule = sheet.find(st.session_state.numero_adherent)
-        except Exception as e:
-            st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
-            cellule = None
-
-        if cellule:
-            ligne = cellule.row
-            if cours_selectionne in liste_cours:
-                colonne = liste_cours.index(cours_selectionne) + 1
-                try:
-                    current_value = sheet.cell(ligne, colonne).value
-
-                    if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
-                        st.error("❌ Cet étudiant a déjà récupéré ce poly.")
-                    else:
-                        sheet.update_cell(ligne, colonne, 1)
-                        st.success("✅ Mise à jour réussie dans Google Sheets !")
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la mise à jour : {e}")
-            else:
-                st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+            # Option to show processed image
+            if st.checkbox("Afficher l'image traitée"):
+                st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
         else:
-            st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+            st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+            st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+            log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
+
+            # Show processed image in error case to help troubleshoot
+            st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
+
+            if not night_mode:
+                st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
+
+    st.subheader("📌 Sélectionner un cours")
+
+    try:
+        liste_cours = sheet.row_values(1)
+        if not liste_cours:
+            st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
+            log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
+    except Exception as e:
+        st.error(f"❌ Erreur lors de la récupération des cours : {e}")
+        log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
+        liste_cours = []
+
+    cours_selectionne = st.selectbox("📖 Choisissez un cours :", liste_cours)
+
+    if st.button("📤 Enregistrer la récupération du cours"):
+        if st.session_state.numero_adherent is None:
+            st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
+            log_activity(st.session_state.username, "Enregistrement poly",
+                         f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
+        else:
+            try:
+                cellule = sheet.find(st.session_state.numero_adherent)
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
+                log_activity(st.session_state.username, "Recherche adhérent",
+                             f"ID: {st.session_state.numero_adherent}, Erreur: {str(e)}", "Échec")
+                cellule = None
+
+            if cellule:
+                ligne = cellule.row
+                if cours_selectionne in liste_cours:
+                    colonne = liste_cours.index(cours_selectionne) + 1
+                    try:
+                        current_value = sheet.cell(ligne, colonne).value
+
+                        if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
+                            st.error("❌ Cet étudiant a déjà récupéré ce poly.")
+                            log_activity(st.session_state.username, "Enregistrement poly",
+                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Déjà récupéré",
+                                         "Échec")
+                        else:
+                            sheet.update_cell(ligne, colonne, 1)
+                            st.success("✅ Mise à jour réussie dans Google Sheets !")
+                            log_activity(st.session_state.username, "Enregistrement poly",
+                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
+                                         "Succès")
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                        log_activity(st.session_state.username, "Enregistrement poly",
+                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Erreur: {str(e)}",
+                                     "Échec")
+                else:
+                    st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+                    log_activity(st.session_state.username, "Enregistrement poly",
+                                 f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne} inexistant",
+                                 "Échec")
+            else:
+                st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+                log_activity(st.session_state.username, "Enregistrement poly",
+                             f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
+
+with tab2:
+    st.title("📊 Interface d'Administration")
+
+    # Check if user has admin privileges
+    if not st.session_state.is_admin:
+        st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
+        st.info("Contactez l'administrateur pour obtenir l'accès.")
+    else:
+        st.success("👑 Connecté en tant qu'administrateur")
+
+        # Create tabs for different admin functions
+        admin_tabs = st.tabs(["Tableau de bord", "Journaux d'activité", "Gestion des utilisateurs",
+                              "Gestion des cours", "Recherche d'étudiants", "Paramètres"])
+
+        # 1. DASHBOARD TAB
+        with admin_tabs[0]:
+            st.header("📈 Tableau de bord")
+
+            # Summary metrics in columns
+            col_dash1, col_dash2 = st.columns(2)
+
+            with col_dash1:
+                try:
+                    all_data = sheet.get_all_records()
+                    total_students = len(all_data)
+                    total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
+
+                    st.metric("Total d'étudiants", total_students)
+                    st.metric("Total de polys distribués", total_polys)
+
+                    # Most popular course
+                    course_counts = {}
+                    for row in all_data:
+                        for course, val in row.items():
+                            if val == 1 and course != sheet.cell(1, 1).value:
+                                course_counts[course] = course_counts.get(course, 0) + 1
+
+                    if course_counts:
+                        popular_course = max(course_counts.items(), key=lambda x: x[1])
+                        st.metric("Poly le plus distribué", f"{popular_course[0]} ({popular_course[1]})")
+                except Exception as e:
+                    st.error(f"Erreur lors du chargement des métriques: {e}")
+
+            with col_dash2:
+                try:
+                    all_logs = log_sheet.get_all_records()
+
+                    # Activity by date
+                    activity_counts = {}
+                    for log in all_logs:
+                        date = log['Date']
+                        activity_counts[date] = activity_counts.get(date, 0) + 1
+
+                    chart_data = pd.DataFrame({
+                        'Date': activity_counts.keys(),
+                        'Activités': activity_counts.values()
+                    })
+
+                    st.subheader("Activité par jour")
+                    st.bar_chart(chart_data.set_index('Date'))
+
+                    # Success rate metrics
+                    success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
+                    failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
+                    total_actions = len(all_logs)
+
+                    if total_actions > 0:
+                        success_rate = (success_count / total_actions) * 100
+                        st.metric("Taux de réussite", f"{success_rate:.1f}%")
+                except Exception as e:
+                    st.error(f"Erreur d'affichage des statistiques: {e}")
+
+            # Recent activity
+            st.subheader("Activité récente")
+            try:
+                recent_logs = sorted(all_logs, key=lambda x: (x['Date'], x['Heure']), reverse=True)[:10]
+                st.dataframe(pd.DataFrame(recent_logs), use_container_width=True)
+            except Exception as e:
+                st.error(f"Erreur lors de l'affichage de l'activité récente: {e}")
+
+        # 2. ACTIVITY LOGS TAB
+        with admin_tabs[1]:
+            st.header("📋 Journal d'activité")
+
+            try:
+                all_logs = log_sheet.get_all_records()
+
+                if not all_logs:
+                    st.info("Aucune activité enregistrée pour le moment.")
+                else:
+                    # Filter options
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        # Get unique usernames
+                        usernames = list(set(log['Utilisateur'] for log in all_logs))
+                        selected_user = st.selectbox("Filtrer par utilisateur:", ["Tous les utilisateurs"] + usernames)
+
+                    with col2:
+                        # Get unique actions
+                        actions = list(set(log['Action'] for log in all_logs))
+                        selected_action = st.selectbox("Filtrer par type d'action:", ["Toutes les actions"] + actions)
+
+                    # Date range selection
+                    start_date, end_date = st.columns(2)
+                    with start_date:
+                        min_date = datetime.datetime.strptime(min(log['Date'] for log in all_logs), "%d/%m/%Y").date()
+                        date_debut = st.date_input("Date de début:", min_date)
+
+                    with end_date:
+                        max_date = datetime.datetime.strptime(max(log['Date'] for log in all_logs), "%d/%m/%Y").date()
+                        date_fin = st.date_input("Date de fin:", max_date)
+
+                    # Filter logs based on selection
+                    filtered_logs = all_logs
+
+                    # Filter by user
+                    if selected_user != "Tous les utilisateurs":
+                        filtered_logs = [log for log in filtered_logs if log['Utilisateur'] == selected_user]
+
+                    # Filter by action
+                    if selected_action != "Toutes les actions":
+                        filtered_logs = [log for log in filtered_logs if log['Action'] == selected_action]
+
+                    # Filter by date
+                    filtered_logs = [
+                        log for log in filtered_logs
+                        if datetime.datetime.strptime(log['Date'], "%d/%m/%Y").date() >= date_debut
+                           and datetime.datetime.strptime(log['Date'], "%d/%m/%Y").date() <= date_fin
+                    ]
+
+                    # Display filtered logs
+                    if not filtered_logs:
+                        st.warning("Aucune activité correspondant aux critères sélectionnés.")
+                    else:
+                        # Status colors
+                        def color_status(status):
+                            if status == "Succès":
+                                return "background-color: #CCFFCC"
+                            elif status == "Échec":
+                                return "background-color: #FFCCCC"
+                            return ""
+
+
+                        # Transform data for display
+                        df_logs = pd.DataFrame(filtered_logs)
+                        st.dataframe(df_logs.style.applymap(color_status, subset=['Statut']),
+                                     height=400, use_container_width=True)
+
+                        # Option to download logs as CSV
+                        st.download_button(
+                            label="📥 Télécharger les logs filtrés (CSV)",
+                            data=df_logs.to_csv(index=False).encode('utf-8'),
+                            file_name=f"logs_CREM_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                            mime="text/csv")
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la récupération des logs: {e}")
+
+        # 3. USER MANAGEMENT TAB
+        with admin_tabs[2]:
+            st.header("👥 Gestion des utilisateurs")
+
+            # Display current users
+            st.subheader("Utilisateurs actuels")
+            try:
+                users = {user: {"password": pwd, "admin": user == st.session_state.username}
+                         for user, pwd in st.secrets["credentials"].items()}
+
+                user_df = pd.DataFrame([
+                    {"Utilisateur": user, "Statut": "Administrateur" if details["admin"] else "Utilisateur"}
+                    for user, details in users.items()
+                ])
+
+                st.dataframe(user_df, use_container_width=True)
+
+                # User management form
+                with st.expander("Ajouter/Modifier un utilisateur"):
+                    st.write(
+                        "⚠️ Note: Les modifications apportées ici nécessitent une implémentation côté serveur pour être persistantes.")
+
+                    new_user = st.text_input("Nom d'utilisateur")
+                    new_password = st.text_input("Mot de passe", type="password")
+                    is_admin = st.checkbox("Administrateur")
+
+                    if st.button("Enregistrer"):
+                        st.warning(
+                            "Cette fonctionnalité nécessite une implémentation côté serveur pour modifier secrets.toml")
+                        st.info(
+                            "Les modifications des utilisateurs ne peuvent pas être appliquées directement depuis l'interface web.")
+                        log_activity(st.session_state.username, "Tentative de modification utilisateur",
+                                     f"Utilisateur: {new_user}", "Information")
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la gestion des utilisateurs: {e}")
+
+        # 4. COURSE MANAGEMENT TAB
+        with admin_tabs[3]:
+            st.header("📚 Gestion des cours")
+
+            try:
+                # Display current courses
+                courses = sheet.row_values(1)[1:]  # Skip the first column (student IDs)
+
+                course_data = []
+                for i, course in enumerate(courses):
+                    # Count students who received this poly
+                    count = len([1 for cell in sheet.col_values(i + 2)[1:] if cell == '1'])
+                    course_data.append({"Cours": course, "Polys distribués": count})
+
+                st.dataframe(pd.DataFrame(course_data), use_container_width=True)
+
+                # Add new course section
+                st.subheader("Ajouter un nouveau cours")
+                new_course = st.text_input("Nom du nouveau cours")
+                if st.button("Ajouter ce cours"):
+                    if new_course:
+                        try:
+                            # Check if course already exists
+                            if new_course in courses:
+                                st.error(f"Le cours '{new_course}' existe déjà!")
+                            else:
+                                sheet.update_cell(1, len(courses) + 2, new_course)
+                                log_activity(st.session_state.username, "Ajout de cours", f"Cours: {new_course}",
+                                             "Succès")
+                                st.success(f"✅ Cours '{new_course}' ajouté avec succès!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erreur: {e}")
+                            log_activity(st.session_state.username, "Ajout de cours",
+                                         f"Cours: {new_course}, Erreur: {str(e)}", "Échec")
+                    else:
+                        st.error("Veuillez saisir un nom de cours")
+            except Exception as e:
+                st.error(f"❌ Erreur lors du chargement des cours: {e}")
+
+        # 5. STUDENT SEARCH TAB
+        with admin_tabs[4]:
+            st.header("🔍 Recherche et gestion d'étudiants")
+
+            try:
+                all_students = sheet.get_all_records()
+                id_field = sheet.cell(1, 1).value  # Get the name of the ID field
+
+                # Search interface
+                search_term = st.text_input("Rechercher un étudiant par numéro d'adhérent")
+
+                if search_term:
+                    results = [student for student in all_students
+                               if search_term.lower() in str(student.get(id_field, '')).lower()]
+
+                    if results:
+                        st.write(f"{len(results)} résultat(s) trouvé(s)")
+                        st.dataframe(pd.DataFrame(results), use_container_width=True)
+
+                        # Select student for editing
+                        student_id = st.selectbox(
+                            "Modifier les polys récupérés:",
+                            [str(s.get(id_field)) for s in results]
+                        )
+
+                        if student_id:
+                            # Find student row
+                            student_row = sheet.find(student_id).row
+                            courses = sheet.row_values(1)[1:]
+
+                            # Show course toggles
+                            st.write("Cochez les polys récupérés:")
+                            cols = st.columns(3)
+                            updated_values = {}
+
+                            for i, course in enumerate(courses):
+                                col_index = i % 3
+                                current_val = sheet.cell(student_row, i + 2).value
+                                with cols[col_index]:
+                                    has_poly = st.checkbox(
+                                        course,
+                                        value=True if current_val == '1' else False
+                                    )
+                                    updated_values[i + 2] = '1' if has_poly else ''
+
+                            if st.button("Mettre à jour"):
+                                for col, val in updated_values.items():
+                                    sheet.update_cell(student_row, col, val)
+                                log_activity(st.session_state.username, "Modification étudiant",
+                                             f"ID: {student_id}", "Succès")
+                                st.success("✅ Informations mises à jour!")
+                    else:
+                        st.warning("Aucun étudiant trouvé.")
+
+                # Add new student section
+                with st.expander("Ajouter un nouvel étudiant"):
+                    new_student_id = st.text_input("Numéro d'adhérent")
+
+                    if st.button("Ajouter"):
+                        if new_student_id:
+                            try:
+                                # Check if student already exists
+                                existing = None
+                                try:
+                                    existing = sheet.find(new_student_id)
+                                except:
+                                    pass
+
+                                if existing:
+                                    st.error(f"Un étudiant avec l'ID '{new_student_id}' existe déjà!")
+                                else:
+                                    # Add new row
+                                    sheet.append_row([new_student_id] + [''] * (len(sheet.row_values(1)) - 1))
+                                    log_activity(st.session_state.username, "Ajout étudiant",
+                                                 f"ID: {new_student_id}", "Succès")
+                                    st.success(f"✅ Étudiant '{new_student_id}' ajouté avec succès!")
+                            except Exception as e:
+                                st.error(f"❌ Erreur: {e}")
+                        else:
+                            st.error("Veuillez saisir un numéro d'adhérent")
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
+
+        # 6. SETTINGS TAB
+        with admin_tabs[5]:
+            st.header("⚙️ Paramètres système")
+
+            st.info(
+                "Ces paramètres sont illustratifs et nécessitent une implémentation supplémentaire pour être fonctionnels")
+
+            # Application settings
+            with st.expander("Paramètres de l'application", expanded=True):
+                st.checkbox("Activer le mode nuit par défaut", value=False)
+                st.checkbox("Enregistrer les images scannées", value=False)
+                st.number_input("Durée de session (minutes)", min_value=10, value=60)
+
+                # Backup options
+                st.subheader("Sauvegarde des données")
+                backup_cols = st.columns(2)
+                with backup_cols[0]:
+                    if st.button("Télécharger toutes les données (CSV)"):
+                        try:
+                            all_data = sheet.get_all_records()
+                            df = pd.DataFrame(all_data)
+                            st.download_button(
+                                "Confirmer le téléchargement",
+                                data=df.to_csv(index=False).encode('utf-8'),
+                                file_name=f"CREM_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
+                            log_activity(st.session_state.username, "Export données", "Téléchargement CSV", "Succès")
+                        except Exception as e:
+                            st.error(f"Erreur d'export: {e}")
+
+                with backup_cols[1]:
+                    if st.button("Télécharger les journaux d'activité"):
+                        try:
+                            all_logs = log_sheet.get_all_records()
+                            df_logs = pd.DataFrame(all_logs)
+                            st.download_button(
+                                "Confirmer le téléchargement",
+                                data=df_logs.to_csv(index=False).encode('utf-8'),
+                                file_name=f"CREM_logs_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                                mime="text/csv"
+                            )
+                        except Exception as e:
+                            st.error(f"Erreur d'export: {e}")
+
+            # About section
+            with st.expander("À propos"):
+                st.write("### CREM - Gestion des polys Tutorat")
+                st.write("Version: 1.0.0")
+                st.write("Contact: web@crem.fr")
+                st.write("<3")
