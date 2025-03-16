@@ -145,9 +145,9 @@ with tab1:
 
     scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
 
-    img_file_buffer = st.camera_input("Take a picture")
     
     with scan_tab:
+        img_file_buffer = st.camera_input("Take a picture")
         image_source = img_file_buffer
 
     with upload_tab:
@@ -251,7 +251,7 @@ with tab2:
     else:
         st.success("👑 Bravo, t'es admin ! Sophie t'a adoubé ?")
         admin_tabs = st.tabs(["Tableau de bord", "Journaux d'activité", "Gestion des utilisateurs",
-                              "Gestion des cours", "Recherche d'étudiants", "Paramètres"])
+                              "Gestion des cours", "Recherche d'étudiants"])
 
         # 1. DASHBOARD TAB
         with admin_tabs[0]:
