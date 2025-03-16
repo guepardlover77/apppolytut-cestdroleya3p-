@@ -237,9 +237,8 @@ with tab1:
                 st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
                 log_activity(st.session_state.username, "Enregistrement poly",
                              f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
-
 if st.session_state.username in st.session_state.is_admin:
-        with tab2:
+    with tab2:
         if st.session_state.username not in st.session_state.is_admin:
             st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
             st.info("Si tu n'es ni VP ni Sophie tu n'as pas accès à cette section.")
