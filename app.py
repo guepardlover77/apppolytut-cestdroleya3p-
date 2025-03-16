@@ -519,12 +519,7 @@ with tab2:
             except Exception as e:
                 st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
 
-        with st.expander("Paramètres de l'application", expanded=True):
-            st.checkbox("Activer le mode nuit par défaut", value=False)
-            st.checkbox("Enregistrer les images scannées", value=False)
-            st.number_input("Durée de session (minutes)", min_value=10, value=60)
-
-            st.subheader("Sauvegarde des données")
+        with st.expander("Sauvegarde des données", expanded=False):
             backup_cols = st.columns(2)
             with backup_cols[0]:
                 if st.button("Télécharger toutes les données (CSV)"):
