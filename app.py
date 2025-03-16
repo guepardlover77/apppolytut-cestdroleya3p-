@@ -323,9 +323,23 @@ with tab2:
                 all_data = sheet.get_all_records()
                 total_students = len(all_data)
                 total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
+                nbLAS, nbPOLY, tauxREUSSITE = st.columns(3)
 
-                st.metric("Total de LAS inscrits", total_students)
-                st.metric("Total de polys distribués", total_polys)
+                with nbLAS:
+                    st.metric("Total de LAS inscrits", total_students)
+                with nbPOLY:
+                    st.metric("Total de polys distribués", total_polys)
+                with tauxREUSSITE:
+                    all_logs = log_sheet.get_all_records()
+
+                    success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
+                    failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
+                    total_actions = len(all_logs)
+    
+                    if total_actions > 0:
+                        success_rate = (success_count / total_actions) * 100
+                        st.metric("Taux de réussite", f"{success_rate:.1f}%")
+                
                 course_counts = {}
                 for row in all_data:
                     for course, val in row.items():
