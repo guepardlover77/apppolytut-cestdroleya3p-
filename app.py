@@ -289,38 +289,6 @@ with tab2:
             st.header("Tableau de bord")
             try:
                 all_data = sheet.get_all_records()
-
-                nblas, nbpoly, nbreussite = st.columns(3)
-                with nblas:
-                    total_students = len(all_data)
-                
-                    st.metric("Total de LAS inscrits", total_students)
-
-                with nbpoly:
-                    total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
-
-                    st.metric("Total de polys distribués", total_polys)
-
-                with nbreussite:
-                    all_logs = log_sheet.get_all_records()
-
-                    success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
-                    failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
-                    total_actions = len(all_logs)
-    
-                    if total_actions > 0:
-                        success_rate = (success_count / total_actions) * 100
-                        st.metric("Taux de réussite", f"{success_rate:.1f}%")
-                    
-                #en travaux
-#-------------------------------------------------------------------------------------------------
-                
-                
-            except Exception as e:
-                st.error(f"Erreur lors du chargement des métriques: {e}")
-
-            try:
-                all_data = sheet.get_all_records()
                 total_students = len(all_data)
                 total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
                 nbLAS, nbPOLY, tauxREUSSITE = st.columns(3)
