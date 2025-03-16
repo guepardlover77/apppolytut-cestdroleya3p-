@@ -127,28 +127,25 @@ if not st.session_state.authentifie:
 tab1, tab2 = st.tabs(["📚 Gestion des polys", "📊 Admin"])
 
 with tab1:
-    st.title("📚 Gestion des polys - CREM")
+    #st.title("📚 Gestion des polys - CREM")
 
-    st.write(f"👤 Connecté en tant que: **{st.session_state.username}**")
+    st.write(f"Connecté en tant que: **{st.session_state.username}**")
 
-    if st.button("🚪 Se déconnecter"):
+    if st.button("Se déconnecter"):
         log_activity(st.session_state.username, "Déconnexion", "", "Succès")
         st.session_state.authentifie = False
         st.session_state.username = None
         st.session_state.is_admin = False
         st.rerun()
 
-    st.subheader("📷 Scanner un code-barres")
+    st.subheader("1. Scanner un code-barres")
 
-    # Night mode toggle
-    night_mode = st.checkbox("🌙 Mode faible luminosité",
+    night_mode = st.checkbox("Mode faible luminosité",
                              help="Activez cette option si vous êtes dans un environnement peu éclairé")
 
-    # Create tabs for camera and file upload options
     scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
 
     with scan_tab:
-        img_file_buffer = st.camera_input("Scannez le code-barres pour récupérer un numéro d'adhérent")
         image_source = img_file_buffer
 
     with upload_tab:
@@ -159,12 +156,9 @@ with tab1:
     if "numero_adherent" not in st.session_state:
         st.session_state.numero_adherent = None
 
-    # Process image from either source
     if image_source is not None:
         file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
         image = cv2.imdecode(file_bytes, 1)
-
-        # Use enhanced barcode scanning with night mode if enabled
         decoded_objs, processed_img = scan_barcode(image, night_mode)
 
         if decoded_objs:
@@ -187,7 +181,7 @@ with tab1:
             if not night_mode:
                 st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
 
-    st.subheader("📌 Sélectionner un cours")
+    st.subheader("2. Sélectionner un cours")
 
     try:
         liste_cours = sheet.row_values(1)
@@ -199,9 +193,9 @@ with tab1:
         log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
         liste_cours = []
 
-    cours_selectionne = st.selectbox("📖 Choisissez un cours :", liste_cours)
+    cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
 
-    if st.button("📤 Enregistrer la récupération du cours"):
+    if st.button("Enregistrer la récupération du cours"):
         if st.session_state.numero_adherent is None:
             st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
             log_activity(st.session_state.username, "Enregistrement poly",
@@ -249,78 +243,59 @@ with tab1:
                              f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
 
 with tab2:
-    st.title("📊 Interface d'Administration")
-
-    # Check if user has admin privileges
     if not st.session_state.is_admin:
         st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
-        st.info("Contactez l'administrateur pour obtenir l'accès.")
+        st.info("Si tu n'es ni VP ni Sophie tu n'as pas accès à cette section.")
     else:
-        st.success("👑 Connecté en tant qu'administrateur")
-
-        # Create tabs for different admin functions
+        st.success("👑 Bravo, t'es admin ! Sophie t'a adoubé ?")
         admin_tabs = st.tabs(["Tableau de bord", "Journaux d'activité", "Gestion des utilisateurs",
                               "Gestion des cours", "Recherche d'étudiants", "Paramètres"])
 
         # 1. DASHBOARD TAB
         with admin_tabs[0]:
-            st.header("📈 Tableau de bord")
+            st.header("Tableau de bord")
+            try:
+                if course_counts:
+                    popular_course = max(course_counts.items(), key=lambda x: x[1])
+                    st.metric("Poly le plus distribué", f"{popular_course[0]} ({popular_course[1]})")
+            except Exception as e:
+                st.error(f"Erreur lors du chargement des métriques: {e}")
 
-            # Summary metrics in columns
-            col_dash1, col_dash2 = st.columns(2)
+            try:
+                all_data = sheet.get_all_records()
+                total_students = len(all_data)
+                total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
 
-            with col_dash1:
-                try:
-                    all_data = sheet.get_all_records()
-                    total_students = len(all_data)
-                    total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
+                st.metric("Total de LAS inscrits", total_students)
+                st.metric("Total de polys distribués", total_polys)
+                course_counts = {}
+                for row in all_data:
+                    for course, val in row.items():
+                        if val == 1 and course != sheet.cell(1, 1).value:
+                            course_counts[course] = course_counts.get(course, 0) + 1
+                all_logs = log_sheet.get_all_records()
+                activity_counts = {}
+                for log in all_logs:
+                    date = log['Date']
+                    activity_counts[date] = activity_counts.get(date, 0) + 1
 
-                    st.metric("Total d'étudiants", total_students)
-                    st.metric("Total de polys distribués", total_polys)
+                chart_data = pd.DataFrame({
+                    'Date': activity_counts.keys(),
+                    'Activités': activity_counts.values()
+                })
 
-                    # Most popular course
-                    course_counts = {}
-                    for row in all_data:
-                        for course, val in row.items():
-                            if val == 1 and course != sheet.cell(1, 1).value:
-                                course_counts[course] = course_counts.get(course, 0) + 1
+                st.subheader("Activité par jour")
+                st.bar_chart(chart_data.set_index('Date'))
+                
+                success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
+                failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
+                total_actions = len(all_logs)
 
-                    if course_counts:
-                        popular_course = max(course_counts.items(), key=lambda x: x[1])
-                        st.metric("Poly le plus distribué", f"{popular_course[0]} ({popular_course[1]})")
-                except Exception as e:
-                    st.error(f"Erreur lors du chargement des métriques: {e}")
-
-            with col_dash2:
-                try:
-                    all_logs = log_sheet.get_all_records()
-
-                    # Activity by date
-                    activity_counts = {}
-                    for log in all_logs:
-                        date = log['Date']
-                        activity_counts[date] = activity_counts.get(date, 0) + 1
-
-                    chart_data = pd.DataFrame({
-                        'Date': activity_counts.keys(),
-                        'Activités': activity_counts.values()
-                    })
-
-                    st.subheader("Activité par jour")
-                    st.bar_chart(chart_data.set_index('Date'))
-
-                    # Success rate metrics
-                    success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
-                    failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
-                    total_actions = len(all_logs)
-
-                    if total_actions > 0:
-                        success_rate = (success_count / total_actions) * 100
-                        st.metric("Taux de réussite", f"{success_rate:.1f}%")
-                except Exception as e:
-                    st.error(f"Erreur d'affichage des statistiques: {e}")
-
-            # Recent activity
+                if total_actions > 0:
+                    success_rate = (success_count / total_actions) * 100
+                    st.metric("Taux de réussite", f"{success_rate:.1f}%")
+            except Exception as e:
+                st.error(f"Erreur d'affichage des statistiques: {e}")
             st.subheader("Activité récente")
             try:
                 recent_logs = sorted(all_logs, key=lambda x: (x['Date'], x['Heure']), reverse=True)[:10]
@@ -330,7 +305,7 @@ with tab2:
 
         # 2. ACTIVITY LOGS TAB
         with admin_tabs[1]:
-            st.header("📋 Journal d'activité")
+            st.header("Journal d'activité")
 
             try:
                 all_logs = log_sheet.get_all_records()
@@ -338,20 +313,16 @@ with tab2:
                 if not all_logs:
                     st.info("Aucune activité enregistrée pour le moment.")
                 else:
-                    # Filter options
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        # Get unique usernames
                         usernames = list(set(log['Utilisateur'] for log in all_logs))
                         selected_user = st.selectbox("Filtrer par utilisateur:", ["Tous les utilisateurs"] + usernames)
 
                     with col2:
-                        # Get unique actions
                         actions = list(set(log['Action'] for log in all_logs))
                         selected_action = st.selectbox("Filtrer par type d'action:", ["Toutes les actions"] + actions)
 
-                    # Date range selection
                     start_date, end_date = st.columns(2)
                     with start_date:
                         min_date = datetime.datetime.strptime(min(log['Date'] for log in all_logs), "%d/%m/%Y").date()
@@ -361,29 +332,23 @@ with tab2:
                         max_date = datetime.datetime.strptime(max(log['Date'] for log in all_logs), "%d/%m/%Y").date()
                         date_fin = st.date_input("Date de fin:", max_date)
 
-                    # Filter logs based on selection
                     filtered_logs = all_logs
 
-                    # Filter by user
                     if selected_user != "Tous les utilisateurs":
                         filtered_logs = [log for log in filtered_logs if log['Utilisateur'] == selected_user]
 
-                    # Filter by action
                     if selected_action != "Toutes les actions":
                         filtered_logs = [log for log in filtered_logs if log['Action'] == selected_action]
 
-                    # Filter by date
                     filtered_logs = [
                         log for log in filtered_logs
                         if datetime.datetime.strptime(log['Date'], "%d/%m/%Y").date() >= date_debut
                            and datetime.datetime.strptime(log['Date'], "%d/%m/%Y").date() <= date_fin
                     ]
 
-                    # Display filtered logs
                     if not filtered_logs:
                         st.warning("Aucune activité correspondant aux critères sélectionnés.")
                     else:
-                        # Status colors
                         def color_status(status):
                             if status == "Succès":
                                 return "background-color: #CCFFCC"
@@ -392,12 +357,10 @@ with tab2:
                             return ""
 
 
-                        # Transform data for display
                         df_logs = pd.DataFrame(filtered_logs)
                         st.dataframe(df_logs.style.applymap(color_status, subset=['Statut']),
                                      height=400, use_container_width=True)
 
-                        # Option to download logs as CSV
                         st.download_button(
                             label="📥 Télécharger les logs filtrés (CSV)",
                             data=df_logs.to_csv(index=False).encode('utf-8'),
@@ -408,7 +371,7 @@ with tab2:
 
         # 3. USER MANAGEMENT TAB
         with admin_tabs[2]:
-            st.header("👥 Gestion des utilisateurs")
+            st.header("Gestion des utilisateurs")
 
             # Display current users
             st.subheader("Utilisateurs actuels")
@@ -444,27 +407,23 @@ with tab2:
 
         # 4. COURSE MANAGEMENT TAB
         with admin_tabs[3]:
-            st.header("📚 Gestion des cours")
+            st.header("Gestion des cours")
 
             try:
-                # Display current courses
-                courses = sheet.row_values(1)[1:]  # Skip the first column (student IDs)
+                courses = sheet.row_values(1)[1:]
 
                 course_data = []
                 for i, course in enumerate(courses):
-                    # Count students who received this poly
                     count = len([1 for cell in sheet.col_values(i + 2)[1:] if cell == '1'])
                     course_data.append({"Cours": course, "Polys distribués": count})
 
                 st.dataframe(pd.DataFrame(course_data), use_container_width=True)
 
-                # Add new course section
                 st.subheader("Ajouter un nouveau cours")
                 new_course = st.text_input("Nom du nouveau cours")
                 if st.button("Ajouter ce cours"):
                     if new_course:
                         try:
-                            # Check if course already exists
                             if new_course in courses:
                                 st.error(f"Le cours '{new_course}' existe déjà!")
                             else:
@@ -484,14 +443,13 @@ with tab2:
 
         # 5. STUDENT SEARCH TAB
         with admin_tabs[4]:
-            st.header("🔍 Recherche et gestion d'étudiants")
+            st.header("Recherche et gestion d'étudiants")
 
             try:
                 all_students = sheet.get_all_records()
-                id_field = sheet.cell(1, 1).value  # Get the name of the ID field
+                id_field = sheet.cell(1, 1).value
 
-                # Search interface
-                search_term = st.text_input("Rechercher un étudiant par numéro d'adhérent")
+                search_term = st.text_input("Rechercher un étudiant par numéro CREM")
 
                 if search_term:
                     results = [student for student in all_students
@@ -501,18 +459,15 @@ with tab2:
                         st.write(f"{len(results)} résultat(s) trouvé(s)")
                         st.dataframe(pd.DataFrame(results), use_container_width=True)
 
-                        # Select student for editing
                         student_id = st.selectbox(
                             "Modifier les polys récupérés:",
                             [str(s.get(id_field)) for s in results]
                         )
 
                         if student_id:
-                            # Find student row
                             student_row = sheet.find(student_id).row
                             courses = sheet.row_values(1)[1:]
 
-                            # Show course toggles
                             st.write("Cochez les polys récupérés:")
                             cols = st.columns(3)
                             updated_values = {}
@@ -536,14 +491,12 @@ with tab2:
                     else:
                         st.warning("Aucun étudiant trouvé.")
 
-                # Add new student section
                 with st.expander("Ajouter un nouvel étudiant"):
                     new_student_id = st.text_input("Numéro d'adhérent")
 
                     if st.button("Ajouter"):
                         if new_student_id:
                             try:
-                                # Check if student already exists
                                 existing = None
                                 try:
                                     existing = sheet.find(new_student_id)
@@ -553,7 +506,6 @@ with tab2:
                                 if existing:
                                     st.error(f"Un étudiant avec l'ID '{new_student_id}' existe déjà!")
                                 else:
-                                    # Add new row
                                     sheet.append_row([new_student_id] + [''] * (len(sheet.row_values(1)) - 1))
                                     log_activity(st.session_state.username, "Ajout étudiant",
                                                  f"ID: {new_student_id}", "Succès")
@@ -565,54 +517,44 @@ with tab2:
             except Exception as e:
                 st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
 
-        # 6. SETTINGS TAB
-        with admin_tabs[5]:
-            st.header("⚙️ Paramètres système")
+        with st.expander("Paramètres de l'application", expanded=True):
+            st.checkbox("Activer le mode nuit par défaut", value=False)
+            st.checkbox("Enregistrer les images scannées", value=False)
+            st.number_input("Durée de session (minutes)", min_value=10, value=60)
 
-            st.info(
-                "Ces paramètres sont illustratifs et nécessitent une implémentation supplémentaire pour être fonctionnels")
+            st.subheader("Sauvegarde des données")
+            backup_cols = st.columns(2)
+            with backup_cols[0]:
+                if st.button("Télécharger toutes les données (CSV)"):
+                    try:
+                        all_data = sheet.get_all_records()
+                        df = pd.DataFrame(all_data)
+                        st.download_button(
+                            "Confirmer le téléchargement",
+                            data=df.to_csv(index=False).encode('utf-8'),
+                            file_name=f"CREM_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
+                        log_activity(st.session_state.username, "Export données", "Téléchargement CSV", "Succès")
+                    except Exception as e:
+                        st.error(f"Erreur d'export: {e}")
 
-            # Application settings
-            with st.expander("Paramètres de l'application", expanded=True):
-                st.checkbox("Activer le mode nuit par défaut", value=False)
-                st.checkbox("Enregistrer les images scannées", value=False)
-                st.number_input("Durée de session (minutes)", min_value=10, value=60)
+            with backup_cols[1]:
+                if st.button("Télécharger les journaux d'activité"):
+                    try:
+                        all_logs = log_sheet.get_all_records()
+                        df_logs = pd.DataFrame(all_logs)
+                        st.download_button(
+                            "Confirmer le téléchargement",
+                            data=df_logs.to_csv(index=False).encode('utf-8'),
+                            file_name=f"CREM_logs_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                            mime="text/csv"
+                        )
+                    except Exception as e:
+                        st.error(f"Erreur d'export: {e}")
 
-                # Backup options
-                st.subheader("Sauvegarde des données")
-                backup_cols = st.columns(2)
-                with backup_cols[0]:
-                    if st.button("Télécharger toutes les données (CSV)"):
-                        try:
-                            all_data = sheet.get_all_records()
-                            df = pd.DataFrame(all_data)
-                            st.download_button(
-                                "Confirmer le téléchargement",
-                                data=df.to_csv(index=False).encode('utf-8'),
-                                file_name=f"CREM_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                                mime="text/csv"
-                            )
-                            log_activity(st.session_state.username, "Export données", "Téléchargement CSV", "Succès")
-                        except Exception as e:
-                            st.error(f"Erreur d'export: {e}")
-
-                with backup_cols[1]:
-                    if st.button("Télécharger les journaux d'activité"):
-                        try:
-                            all_logs = log_sheet.get_all_records()
-                            df_logs = pd.DataFrame(all_logs)
-                            st.download_button(
-                                "Confirmer le téléchargement",
-                                data=df_logs.to_csv(index=False).encode('utf-8'),
-                                file_name=f"CREM_logs_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                                mime="text/csv"
-                            )
-                        except Exception as e:
-                            st.error(f"Erreur d'export: {e}")
-
-            # About section
-            with st.expander("À propos"):
-                st.write("### CREM - Gestion des polys Tutorat")
-                st.write("Version: 1.0.0")
-                st.write("Contact: web@crem.fr")
-                st.write("<3")
+        with st.expander("À propos"):
+            st.write("### CREM - Gestion des polys Tutorat")
+            st.write("Version: 1.0.0")
+            st.write("Contact: web@crem.fr")
+            st.write("<3")
