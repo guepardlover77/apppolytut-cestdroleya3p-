@@ -679,3 +679,5 @@ with propos:
         st.write("Version: 1.0.0")
         st.write("Contact: web@crem.fr")
         st.write("<3")
+
+#Mathéo Milley-Arjaliès, Webmaster au CREM, référent SHS au Tutorat
