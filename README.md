@@ -9,7 +9,8 @@ Je précise que si le CREM perd de l'argent y aura plus de gala, plus de voyage 
 C'est complètement inutile de déployer ça en local si ce n'est pour s'entrainer à manipuler streamlit.
 Je vais quand même l'expliquer :
 ```
-git clone https://github.com/guepardlover77/apppolytut-cestdroleya3p-.git && cd apppolytut-cestdroleya3p-
+git clone https://github.com/guepardlover77/apppolytut-cestdroleya3p-.git
+cd apppolytut-cestdroleya3p-
 pip install -r requirements.txt
 streamlit run app.py
 ```
