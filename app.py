@@ -145,6 +145,8 @@ with tab1:
 
     scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
 
+    img_file_buffer = st.camera_input("Take a picture")
+    
     with scan_tab:
         image_source = img_file_buffer
 
