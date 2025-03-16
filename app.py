@@ -126,7 +126,7 @@ if not st.session_state.authentifie:
     st.stop()
 
 if st.session_state.username not in st.session_state.is_admin:
-    st.header(f"Coucou **{st.session_state.username}**"
+    st.header(f"Coucou {st.session_state.username}")
 #st.title("📚 Gestion des polys - CREM")
 
     st.subheader("1. Scanner un code-barres")
