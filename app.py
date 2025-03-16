@@ -173,6 +173,8 @@ with tab1:
             if not night_mode:
                 st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
 
+    st.write("-------------------------------------------------------------------------------------------------------------------------")
+
     st.subheader("2. Sélectionner un cours")
 #pompompidou
 
