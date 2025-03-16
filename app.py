@@ -6,15 +6,10 @@ from pyzbar.pyzbar import decode
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
-from telegram import Bot
 
 #pompompidou
 #j'ai testé un truc pour mettre en page automatiquement, ça a l'air pas mal
 
-TELEGRAM_BOT_TOKEN = st.secrets["telegram_bot_token"]
-CHAT_ID = st.secrets["telegram_chat_id"]
-
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 st.set_page_config(
     page_title="CREM - Gestion des polys Tutorat",
@@ -45,24 +40,6 @@ try:
 except gspread.exceptions.WorksheetNotFound:
     log_sheet = client.open("1").add_worksheet(title="Logs", rows=1000, cols=6)
     log_sheet.append_row(["Date", "Heure", "Utilisateur", "Action", "Détails", "Statut"])
-
-
-def send_telegram_message(message):
-    try:
-        bot.send_message(chat_id=CHAT_ID, text=message)
-    except Exception as e:
-        st.error(f"Error sending message: {e}")
-
-def check_new_data():
-    try:
-        all_data = sheet.get_all_records()
-        total_entries = len(all_data)
-        if total_entries > 100:  # Adjust the condition as needed
-            send_telegram_message(f"Alert: There are now {total_entries} entries on the website.")
-    except Exception as e:
-        st.error(f"Error checking new data: {e}")
-
-check_new_data()
 
 
 def log_activity(username, action, details, status):
@@ -193,7 +170,6 @@ with tab1:
             log_activity(st.session_state.username, "Scan de code-barres",
                          f"ID: {st.session_state.numero_adherent}", "Succès")
 
-            # Option to show processed image
             if st.checkbox("Afficher l'image traitée"):
                 st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
         else:
@@ -201,13 +177,13 @@ with tab1:
             st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
             log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
 
-            # Show processed image in error case to help troubleshoot
             st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
 
             if not night_mode:
                 st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
 
     st.subheader("2. Sélectionner un cours")
+#pompompidou
 
     try:
         liste_cours = sheet.row_values(1)
@@ -253,7 +229,7 @@ with tab1:
                             log_activity(st.session_state.username, "Enregistrement poly",
                                          f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
                                          "Succès")
-                            check_new_data()
+                            #pompompidou
                     except Exception as e:
                         st.error(f"❌ Erreur lors de la mise à jour : {e}")
                         log_activity(st.session_state.username, "Enregistrement poly",
@@ -308,6 +284,7 @@ with tab2:
         
         admin_tabs = st.tabs(["Tableau de bord", "Journaux d'activité", "Gestion des utilisateurs",
                               "Gestion des cours", "Recherche d'étudiants"])
+#pompompidou
 
         # 1. DASHBOARD TAB
         with admin_tabs[0]:
@@ -390,6 +367,7 @@ with tab2:
                     with end_date:
                         max_date = datetime.datetime.strptime(max(log['Date'] for log in all_logs), "%d/%m/%Y").date()
                         date_fin = st.date_input("Date de fin:", max_date)
+#pompompidou
 
                     filtered_logs = all_logs
 
@@ -463,6 +441,7 @@ with tab2:
                                      f"Utilisateur: {new_user}", "Information")
             except Exception as e:
                 st.error(f"❌ Erreur lors de la gestion des utilisateurs: {e}")
+#pompompidou
 
         # 4. COURSE MANAGEMENT TAB
         with admin_tabs[3]:
@@ -549,6 +528,7 @@ with tab2:
                                 st.success("✅ Informations mises à jour!")
                     else:
                         st.warning("Aucun étudiant trouvé.")
+#pompompidou
 
                 with st.expander("Ajouter un nouvel étudiant"):
                     new_student_id = st.text_input("Numéro d'adhérent")
@@ -575,6 +555,7 @@ with tab2:
                             st.error("Veuillez saisir un numéro d'adhérent")
             except Exception as e:
                 st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
+#pompompidou
 
     with st.expander("À propos"):
         st.write("### CREM - Gestion des polys Tutorat")
