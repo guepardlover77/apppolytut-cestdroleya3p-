@@ -239,7 +239,7 @@ if st.session_state.username not in st.session_state.is_admin:
 
 
 if st.session_state.username in st.session_state.is_admin:
-    tab1, tab2 = st.tabs(2)
+    tab1, tab2 = st.tabs(["Interface des tuteurs", "Admin"])
     with tab1:
         
         st.subheader("1. Scanner un code-barres")
