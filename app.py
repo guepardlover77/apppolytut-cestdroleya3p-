@@ -302,20 +302,18 @@ with tab2:
                     st.metric("Total de polys distribués", total_polys)
 
                 with nbreussite:
-                    
+                    success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
+                    failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
+                    total_actions = len(all_logs)
+    
+                    if total_actions > 0:
+                        success_rate = (success_count / total_actions) * 100
+                        st.metric("Taux de réussite", f"{success_rate:.1f}%")
                     
                 #en travaux
 #-------------------------------------------------------------------------------------------------
                 
-                course_counts = {}
-                for row in all_data:
-                    for course, val in row.items():
-                        if val == 1 and course != sheet.cell(1, 1).value:
-                            course_counts[course] = course_counts.get(course, 0) + 1
-            
-                if course_counts:
-                    popular_course = max(course_counts.items(), key=lambda x: x[1])
-                    st.metric("Poly le plus distribué", f"{popular_course[0]} ({popular_course[1]})")
+                
             except Exception as e:
                 st.error(f"Erreur lors du chargement des métriques: {e}")
 
@@ -345,13 +343,7 @@ with tab2:
                 st.subheader("Activité par jour")
                 st.bar_chart(chart_data.set_index('Date'))
                 
-                success_count = len([log for log in all_logs if log['Statut'] == 'Succès'])
-                failure_count = len([log for log in all_logs if log['Statut'] == 'Échec'])
-                total_actions = len(all_logs)
 
-                if total_actions > 0:
-                    success_rate = (success_count / total_actions) * 100
-                    st.metric("Taux de réussite", f"{success_rate:.1f}%")
             except Exception as e:
                 st.error(f"Erreur d'affichage des statistiques: {e}")
             st.subheader("Activité récente")
