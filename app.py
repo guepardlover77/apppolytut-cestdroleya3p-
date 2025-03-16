@@ -130,15 +130,6 @@ tab1, tab2 = st.tabs(["📚 Gestion des polys", "📊 Admin"])
 with tab1:
     #st.title("📚 Gestion des polys - CREM")
 
-    st.write(f"Connecté en tant que: **{st.session_state.username}**")
-
-    if st.button("Se déconnecter"):
-        log_activity(st.session_state.username, "Déconnexion", "", "Succès")
-        st.session_state.authentifie = False
-        st.session_state.username = None
-        st.session_state.is_admin = False
-        st.rerun()
-
     st.subheader("1. Scanner un code-barres")
 
     night_mode = st.checkbox("Mode faible luminosité",
@@ -557,8 +548,18 @@ with tab2:
                 st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
 #pompompidou
 
-    with st.expander("À propos"):
-        st.write("### CREM - Gestion des polys Tutorat")
-        st.write("Version: 1.0.0")
-        st.write("Contact: web@crem.fr")
-        st.write("<3")
+
+st.write(f"Connecté en tant que: **{st.session_state.username}**")
+
+if st.button("Se déconnecter"):
+    log_activity(st.session_state.username, "Déconnexion", "", "Succès")
+    st.session_state.authentifie = False
+    st.session_state.username = None
+    st.session_state.is_admin = False
+    st.rerun()
+    
+with st.expander("À propos"):
+    st.write("### CREM - Gestion des polys Tutorat")
+    st.write("Version: 1.0.0")
+    st.write("Contact: web@crem.fr")
+    st.write("<3")
