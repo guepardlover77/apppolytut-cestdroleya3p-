@@ -280,11 +280,7 @@ with tab2:
                 except Exception as e:
                     st.error(f"Erreur d'export: {e}")
 
-        with st.expander("À propos"):
-            st.write("### CREM - Gestion des polys Tutorat")
-            st.write("Version: 1.0.0")
-            st.write("Contact: web@crem.fr")
-            st.write("<3")
+        
         admin_tabs = st.tabs(["Tableau de bord", "Journaux d'activité", "Gestion des utilisateurs",
                               "Gestion des cours", "Recherche d'étudiants"])
 
@@ -554,4 +550,8 @@ with tab2:
             except Exception as e:
                 st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
 
-        
+    with st.expander("À propos"):
+        st.write("### CREM - Gestion des polys Tutorat")
+        st.write("Version: 1.0.0")
+        st.write("Contact: web@crem.fr")
+        st.write("<3")
