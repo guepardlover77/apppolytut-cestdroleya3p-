@@ -551,12 +551,10 @@ with tab2:
 #pompompidou
 
 st.write("-------------------------------------------------------------------------------------------------------------------------")
-user, logout, propos = st.columns(3)
+user, propos = st.columns(2)
 
 with user:
     st.write(f"Connecté en tant que: **{st.session_state.username}**")
-
-with logout:
     if st.button("Se déconnecter"):
         log_activity(st.session_state.username, "Déconnexion", "", "Succès")
         st.session_state.authentifie = False
