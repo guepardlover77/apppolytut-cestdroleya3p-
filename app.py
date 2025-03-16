@@ -289,11 +289,23 @@ with tab2:
             st.header("Tableau de bord")
             try:
                 all_data = sheet.get_all_records()
-                total_students = len(all_data)
-                total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
-            
-                st.metric("Total de LAS inscrits", total_students)
-                st.metric("Total de polys distribués", total_polys)
+
+                nblas, nbpoly, nbreussite = st.columns(3)
+                with nblas:
+                    total_students = len(all_data)
+                
+                    st.metric("Total de LAS inscrits", total_students)
+
+                with nbpoly:
+                    total_polys = sum(1 for row in all_data for col, val in row.items() if val == 1)
+
+                    st.metric("Total de polys distribués", total_polys)
+
+                with nbreussite:
+                    
+                    
+                #en travaux
+#-------------------------------------------------------------------------------------------------
                 
                 course_counts = {}
                 for row in all_data:
