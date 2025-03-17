@@ -8,7 +8,6 @@ from google.oauth2.service_account import Credentials
 import datetime
 
 #pompompidou
-#j'ai testé un truc pour mettre en page automatiquement, ça a l'air pas mal
 
 
 st.set_page_config(
@@ -16,7 +15,7 @@ st.set_page_config(
     page_icon="logo.png" #logo du crem ou du tut ?
 )
 
-
+#pompompidou
 
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
@@ -251,7 +250,7 @@ if st.session_state.username not in st.session_state.is_admin:
 
 
 if st.session_state.username in st.session_state.is_admin:
-    tab1, tab2 = st.tabs(["Interface des tuteurs", "Admin"])
+    tab1, tab2 = st.tabs(["🤓 Interface des tuteurs", "👑 Admin"])
     with tab1:
         
         st.subheader("1. Scanner un code-barres")
