@@ -118,7 +118,7 @@ if not st.session_state.authentifie:
     with col3:
         st.write(' ')
         
-    st.title("🔑 Connexion requise")
+    st.title("Connexion 🔑")
     utilisateur = st.text_input("Identifiant")
     mot_de_passe = st.text_input("Mot de passe", type="password")
     connexion_bouton = st.button("Se connecter")
