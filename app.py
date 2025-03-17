@@ -16,6 +16,38 @@ st.set_page_config(
     page_icon="logo.png" #logo du crem ou du tut ?
 )
 
+st.markdown("""
+    <style>
+    body {
+        background: url('https://example.com/background.jpg') no-repeat center center fixed; 
+        background-size: cover;
+    }
+    .stButton button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 15px 32px;
+        font-size: 16px;
+    }
+    .stTextInput input {
+        padding: 10px;
+        font-size: 16px;
+    }
+    .stTextInput label {
+        font-size: 18px;
+        font-weight: bold;
+    }
+    .login-container {
+        background: rgba(255, 255, 255, 0.8);
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+        max-width: 400px;
+        margin: auto;
+        margin-top: 100px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 credentials = {
@@ -105,22 +137,24 @@ if "authentifie" not in st.session_state:
     st.session_state.is_admin = False
 
 if not st.session_state.authentifie:
-    st.title("🔑 Connexion requise")
-
-    utilisateur = st.text_input("Identifiant")
-    mot_de_passe = st.text_input("Mot de passe", type="password")
-    connexion_bouton = st.button("Se connecter")
-    if connexion_bouton:
-        if verifier_identifiants(utilisateur, mot_de_passe):
-            st.session_state.authentifie = True
-            st.session_state.username = utilisateur
-            st.session_state.is_admin = ["SirIsaac21", "vp_star", "star"]
-            log_activity(utilisateur, "Connexion", "Connexion réussie", "Succès")
-            st.success("✅ Connexion réussie !")
-            st.rerun()
-        else:
-            log_activity(utilisateur, "Tentative de connexion", "Identifiants incorrects", "Échec")
-            st.error("❌ Identifiants incorrects. Veuillez réessayer.")
+    with st.container():
+        st.title("🔑 Connexion requise")
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        st.image("logo.png", width=100)
+        utilisateur = st.text_input("Identifiant")
+        mot_de_passe = st.text_input("Mot de passe", type="password")
+        connexion_bouton = st.button("Se connecter")
+        if connexion_bouton:
+            if verifier_identifiants(utilisateur, mot_de_passe):
+                st.session_state.authentifie = True
+                st.session_state.username = utilisateur
+                st.session_state.is_admin = ["SirIsaac21", "vp_star", "star"]
+                log_activity(utilisateur, "Connexion", "Connexion réussie", "Succès")
+                st.success("✅ Connexion réussie !")
+                st.rerun()
+            else:
+                log_activity(utilisateur, "Tentative de connexion", "Identifiants incorrects", "Échec")
+                st.error("❌ Identifiants incorrects. Veuillez réessayer.")
 
     st.stop()
 
