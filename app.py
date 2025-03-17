@@ -125,7 +125,7 @@ if not st.session_state.authentifie:
         if verifier_identifiants(utilisateur, mot_de_passe):
             st.session_state.authentifie = True
             st.session_state.username = utilisateur
-            st.session_state.is_admin = ["SirIsaac21", "vp_star", "star"]
+            st.session_state.is_admin = ["SirIsaac21", "vp_star", "sophie"]
             log_activity(utilisateur, "Connexion", "Connexion réussie", "Succès")
             st.success("✅ Connexion réussie !")
             st.rerun()
