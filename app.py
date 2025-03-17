@@ -107,7 +107,7 @@ if "authentifie" not in st.session_state:
     st.session_state.is_admin = False
 
 if not st.session_state.authentifie:
-    st.image("logo.png")
+    st.image("logo.png", width=200)
     st.title("🔑 Connexion requise")
     utilisateur = st.text_input("Identifiant")
     mot_de_passe = st.text_input("Mot de passe", type="password")
