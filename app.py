@@ -502,7 +502,6 @@ if page == "📱 Scanner Rapide":
         
         # Create the webRTC streamer
         webrtc_ctx = webrtc_streamer(
-        webrtc_ctx = webrtc_streamer(
             key="barcode-scanner",
             video_transformer_factory=lambda: VideoTransformer(st.session_state.barcode_result_queue),
             rtc_configuration=rtc_config,
