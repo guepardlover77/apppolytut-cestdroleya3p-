@@ -6,9 +6,11 @@ from pyzbar.pyzbar import decode
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
+import base64
+import time
+from streamlit.components.v1 import html
 
 #pompompidou
-
 
 st.set_page_config(
     page_title="CREM - Gestion des polys Tutorat",
@@ -100,6 +102,220 @@ def scan_barcode(image, night_mode=False):
     return results, eroded if night_mode else blurred
 
 
+# Composant personnalisé pour le scanner de code-barres en continu
+def continuous_barcode_scanner(callback_url, night_mode=False, key=None):
+    # Code JavaScript pour scanner en continu
+    scanner_html = """
+    <div>
+        <div id="barcode-scanner-wrapper">
+            <video id="barcode-scanner" width="100%" autoplay></video>
+            <canvas id="barcode-canvas" style="display:none;"></canvas>
+            <div id="scanner-status">Initialisation de la caméra...</div>
+            <div id="scan-result"></div>
+            <button id="toggle-camera" style="margin-top: 10px; padding: 8px;">Changer de caméra</button>
+            <button id="stop-scanning" style="margin-top: 10px; margin-left: 10px; padding: 8px;">Arrêter le scan</button>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1"></script>
+        <script>
+            const videoElement = document.getElementById('barcode-scanner');
+            const canvasElement = document.getElementById('barcode-canvas');
+            const statusElement = document.getElementById('scanner-status');
+            const resultElement = document.getElementById('scan-result');
+            const toggleButton = document.getElementById('toggle-camera');
+            const stopButton = document.getElementById('stop-scanning');
+            
+            let selectedDeviceId = '';
+            let codeReader = new ZXing.BrowserMultiFormatReader();
+            let scanning = true;
+            let nightMode = """ + str(night_mode).lower() + """;
+            let lastScanned = '';
+            let lastScannedTime = 0;
+            
+            async function startScanner() {
+                try {
+                    statusElement.textContent = 'Accès à la caméra...';
+                    const videoConstraints = {};
+                    
+                    // Si un appareil est sélectionné, l'utiliser
+                    if (selectedDeviceId !== '') {
+                        videoConstraints.deviceId = {exact: selectedDeviceId};
+                    } else {
+                        // Sinon, préférer la caméra arrière
+                        videoConstraints.facingMode = 'environment';
+                    }
+                    
+                    // Ajouter des paramètres pour une meilleure performance dans des conditions de faible luminosité
+                    if (nightMode) {
+                        videoConstraints.advanced = [
+                            {exposureMode: 'manual', exposureCompensation: 2},
+                            {focusMode: 'continuous'}
+                        ];
+                    }
+                    
+                    const constraints = {
+                        video: videoConstraints,
+                        audio: false
+                    };
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    videoElement.srcObject = stream;
+                    statusElement.textContent = 'Caméra prête. Scannez un code-barres...';
+                    
+                    decodeFromStream();
+                } catch (err) {
+                    statusElement.textContent = 'Erreur d\'accès à la caméra: ' + err;
+                    console.error(err);
+                }
+            }
+
+            function decodeFromStream() {
+                if (!scanning) return;
+                
+                // Dessiner l'image vidéo sur le canvas
+                const context = canvasElement.getContext('2d');
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+                context.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+                
+                // Améliorer l'image en mode nuit
+                if (nightMode) {
+                    const imageData = context.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                    const data = imageData.data;
+                    
+                    // Simple amélioration du contraste
+                    for (let i = 0; i < data.length; i += 4) {
+                        data[i] = data[i] < 100 ? 0 : 255;        // Rouge
+                        data[i + 1] = data[i + 1] < 100 ? 0 : 255; // Vert
+                        data[i + 2] = data[i + 2] < 100 ? 0 : 255; // Bleu
+                    }
+                    
+                    context.putImageData(imageData, 0, 0);
+                }
+                
+                try {
+                    // Utiliser ZXing pour détecter les codes-barres
+                    codeReader.decodeFromCanvas(canvasElement)
+                        .then(result => {
+                            const now = Date.now();
+                            // Ne traiter que si c'est un nouveau code ou si 3 secondes se sont écoulées
+                            if (result && (result.text !== lastScanned || now - lastScannedTime > 3000)) {
+                                lastScanned = result.text;
+                                lastScannedTime = now;
+                                resultElement.textContent = 'Code trouvé: ' + result.text;
+                                
+                                // Envoyer le résultat à Streamlit
+                                const data = {
+                                    barcode: result.text,
+                                    format: result.format,
+                                    timestamp: now
+                                };
+                                
+                                fetch('""" + callback_url + """', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify(data)
+                                }).then(response => {
+                                    if (response.ok) {
+                                        resultElement.textContent += ' - Envoyé!';
+                                    }
+                                }).catch(error => {
+                                    console.error('Error sending data:', error);
+                                });
+                            }
+                        })
+                        .catch(() => { /* Ignorer les erreurs de décodage */ });
+                } catch (e) {
+                    console.error('Erreur de décodage:', e);
+                }
+                
+                // Scanner en continu
+                if (scanning) {
+                    requestAnimationFrame(decodeFromStream);
+                }
+            }
+            
+            async function toggleCamera() {
+                // Arrêter la caméra actuelle
+                if (videoElement.srcObject) {
+                    videoElement.srcObject.getTracks().forEach(track => track.stop());
+                }
+                
+                // Obtenir la liste des appareils disponibles
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length <= 1) {
+                    statusElement.textContent = 'Une seule caméra détectée';
+                    selectedDeviceId = '';
+                } else {
+                    // Si aucun appareil n'est sélectionné ou si l'appareil courant est le dernier de la liste,
+                    // sélectionner le premier appareil, sinon sélectionner l'appareil suivant
+                    if (selectedDeviceId === '' || 
+                        selectedDeviceId === videoDevices[videoDevices.length - 1].deviceId) {
+                        selectedDeviceId = videoDevices[0].deviceId;
+                    } else {
+                        const currentIndex = videoDevices.findIndex(device => device.deviceId === selectedDeviceId);
+                        selectedDeviceId = videoDevices[currentIndex + 1].deviceId;
+                    }
+                    
+                    statusElement.textContent = 'Changement de caméra...';
+                }
+                
+                // Redémarrer le scanner avec le nouvel appareil
+                startScanner();
+            }
+            
+            function stopScanning() {
+                scanning = false;
+                if (videoElement.srcObject) {
+                    videoElement.srcObject.getTracks().forEach(track => track.stop());
+                }
+                statusElement.textContent = 'Scan arrêté';
+            }
+            
+            // Démarrer le scanner
+            startScanner();
+            toggleButton.addEventListener('click', toggleCamera);
+            stopButton.addEventListener('click', stopScanning);
+            
+            // Nettoyer les ressources quand le composant est détruit
+            window.addEventListener('beforeunload', () => {
+                if (videoElement.srcObject) {
+                    videoElement.srcObject.getTracks().forEach(track => track.stop());
+                }
+            });
+        </script>
+    </div>
+    """
+    
+    # Générer un ID unique pour ce composant
+    component_id = f"barcode_scanner_{key}"
+    
+    # Créer une URL de callback pour ce composant
+    if not callback_url:
+        callback_url = "/_stcore/stream"
+    
+    # Injecter le composant HTML
+    html(scanner_html, height=400, key=component_id)
+
+
+# Pour gérer les résultats du scanner
+def handle_scan_result():
+    # Vérifier si une nouvelle analyse a été reçue
+    if 'scan_results' in st.session_state and st.session_state.scan_results:
+        result = st.session_state.scan_results.pop(0)  # Prendre le premier résultat
+        barcode_data = result.get('barcode')
+        
+        if barcode_data:
+            st.session_state.numero_adherent = barcode_data
+            return True
+    
+    return False
+
+
 if "authentifie" not in st.session_state:
     st.session_state.authentifie = False
     st.session_state.username = None
@@ -135,146 +351,69 @@ if not st.session_state.authentifie:
 
     st.stop()
 
+# Initialiser les structures de données nécessaires
+if "scan_results" not in st.session_state:
+    st.session_state.scan_results = []
+if "last_processed_barcode" not in st.session_state:
+    st.session_state.last_processed_barcode = None
+if "processing_status" not in st.session_state:
+    st.session_state.processing_status = None
+if "continuous_scan_active" not in st.session_state:
+    st.session_state.continuous_scan_active = False
+if "cours_selectionne" not in st.session_state:
+    st.session_state.cours_selectionne = None
+if "numero_adherent" not in st.session_state:
+    st.session_state.numero_adherent = None
+
+
 if st.session_state.username not in st.session_state.is_admin:
     st.header(f"Coucou {st.session_state.username} !")
-#st.title("📚 Gestion des polys - CREM")
 
+    # Section pour le scanner continu
     st.subheader("1. Scanner un code-barres")
     
     night_mode = st.checkbox("Mode faible luminosité",
-                             help="Activez cette option si vous êtes dans un environnement peu éclairé")
+                            help="Activez cette option si vous êtes dans un environnement peu éclairé")
     
-    scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
-    
+    scan_tab, upload_tab = st.tabs(["Scanner en continu", "Importer une image"])
     
     with scan_tab:
-        st.write("Préparez-vous, j'ai pas trouvé comment mettre la caméra arrière par défaut")
-        img_file_buffer = st.camera_input("Prendre la photo")
-        image_source = img_file_buffer
+        # Montrer le statut actuel
+        status_placeholder = st.empty()
+        
+        # Option pour activer/désactiver le scan continu
+        if not st.session_state.continuous_scan_active:
+            if st.button("Activer le scan continu"):
+                st.session_state.continuous_scan_active = True
+                st.rerun()
+        else:
+            if st.button("Désactiver le scan continu"):
+                st.session_state.continuous_scan_active = False
+                st.rerun()
+        
+        # Afficher le scanner continu s'il est activé
+        if st.session_state.continuous_scan_active:
+            st.markdown("### Scanner en continu")
+            st.markdown("Tenez simplement le code-barres devant la caméra. Le scan se fait automatiquement.")
+            
+            # Créer une URL de callback pour la communication avec le composant
+            callback_url = "/_stcore/component/barcode_callback"
+            
+            # Injecter le composant de scan continu
+            continuous_barcode_scanner(callback_url, night_mode, key="main_scanner")
+            
+            # Afficher l'état actuel du scanner
+            if st.session_state.numero_adherent:
+                status_placeholder.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+            else:
+                status_placeholder.info("En attente de la détection d'un code-barres...")
     
     with upload_tab:
         uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
                                          type=['jpg', 'jpeg', 'png', 'bmp'])
-        image_source = uploaded_file
-    
-    if "numero_adherent" not in st.session_state:
-        st.session_state.numero_adherent = None
-    
-    if image_source is not None:
-        file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, 1)
-        decoded_objs, processed_img = scan_barcode(image, night_mode)
-    
-        if decoded_objs:
-            st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
-            st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
-            log_activity(st.session_state.username, "Scan de code-barres",
-                         f"ID: {st.session_state.numero_adherent}", "Succès")
-    
-            if st.checkbox("Afficher l'image traitée"):
-                st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
-        else:
-            st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
-            st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
-            log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
-    
-            st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
-    
-            if not night_mode:
-                st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
-    
-    st.write("-------------------------------------------------------------------------------------------------------------------------")
-    
-    st.subheader("2. Sélectionner un cours")
-    #pompompidou
-    
-    try:
-        liste_cours = sheet.row_values(1)
-        if not liste_cours:
-            st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
-            log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
-    except Exception as e:
-        st.error(f"❌ Erreur lors de la récupération des cours : {e}")
-        log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
-        liste_cours = []
-    
-    cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
-    
-    if st.button("Enregistrer la récupération du cours"):
-        if st.session_state.numero_adherent is None:
-            st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
-            log_activity(st.session_state.username, "Enregistrement poly",
-                         f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
-        else:
-            try:
-                cellule = sheet.find(st.session_state.numero_adherent)
-            except Exception as e:
-                st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
-                log_activity(st.session_state.username, "Recherche adhérent",
-                             f"ID: {st.session_state.numero_adherent}, Erreur: {str(e)}", "Échec")
-                cellule = None
-    
-            if cellule:
-                ligne = cellule.row
-                if cours_selectionne in liste_cours:
-                    colonne = liste_cours.index(cours_selectionne) + 1
-                    try:
-                        current_value = sheet.cell(ligne, colonne).value
-    
-                        if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
-                            st.error("❌ Cet étudiant a déjà récupéré ce poly.")
-                            log_activity(st.session_state.username, "Enregistrement poly",
-                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Déjà récupéré",
-                                         "Échec")
-                        else:
-                            sheet.update_cell(ligne, colonne, 1)
-                            st.success("✅ Mise à jour réussie dans Google Sheets !")
-                            log_activity(st.session_state.username, "Enregistrement poly",
-                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
-                                         "Succès")
-                            #pompompidou
-                    except Exception as e:
-                        st.error(f"❌ Erreur lors de la mise à jour : {e}")
-                        log_activity(st.session_state.username, "Enregistrement poly",
-                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Erreur: {str(e)}",
-                                     "Échec")
-                else:
-                    st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
-                    log_activity(st.session_state.username, "Enregistrement poly",
-                                 f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne} inexistant",
-                                 "Échec")
-            else:
-                st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
-                log_activity(st.session_state.username, "Enregistrement poly",
-                             f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
-
-
-if st.session_state.username in st.session_state.is_admin:
-    tab1, tab2 = st.tabs(["🤓 Interface des tuteurs", "👑 Admin"])
-    with tab1:
         
-        st.subheader("1. Scanner un code-barres")
-        
-        night_mode = st.checkbox("Mode faible luminosité",
-                                 help="Activez cette option si vous êtes dans un environnement peu éclairé")
-        
-        scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
-        
-        
-        with scan_tab:
-            img_file_buffer = st.camera_input("Take a picture")
-            image_source = img_file_buffer
-        
-        with upload_tab:
-            uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
-                                             type=['jpg', 'jpeg', 'png', 'bmp'])
-            image_source = uploaded_file
-        
-        if "numero_adherent" not in st.session_state:
-            st.session_state.numero_adherent = None
-        
-        if image_source is not None:
-            file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
+        if uploaded_file is not None:
+            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
             image = cv2.imdecode(file_bytes, 1)
             decoded_objs, processed_img = scan_barcode(image, night_mode)
         
@@ -295,11 +434,177 @@ if st.session_state.username in st.session_state.is_admin:
         
                 if not night_mode:
                     st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
+    
+    st.write("-------------------------------------------------------------------------------------------------------------------------")
+    
+    st.subheader("2. Sélectionner un cours")
+    #pompompidou
+    
+    try:
+        liste_cours = sheet.row_values(1)
+        if not liste_cours:
+            st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
+            log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
+    except Exception as e:
+        st.error(f"❌ Erreur lors de la récupération des cours : {e}")
+        log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
+        liste_cours = []
+    
+    cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
+    st.session_state.cours_selectionne = cours_selectionne
+    
+    # Fonction pour enregistrer automatiquement
+    def enregistrer_cours(numero_adherent, cours):
+        if not numero_adherent:
+            st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
+            log_activity(st.session_state.username, "Enregistrement poly",
+                        f"Cours: {cours} - Aucun numéro d'adhérent", "Échec")
+            return False
+        
+        try:
+            cellule = sheet.find(numero_adherent)
+        except Exception as e:
+            st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
+            log_activity(st.session_state.username, "Recherche adhérent",
+                        f"ID: {numero_adherent}, Erreur: {str(e)}", "Échec")
+            return False
+
+        if cellule:
+            ligne = cellule.row
+            if cours in liste_cours:
+                colonne = liste_cours.index(cours) + 1
+                try:
+                    current_value = sheet.cell(ligne, colonne).value
+
+                    if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
+                        st.error("❌ Cet étudiant a déjà récupéré ce poly.")
+                        log_activity(st.session_state.username, "Enregistrement poly",
+                                    f"ID: {numero_adherent}, Cours: {cours}, Déjà récupéré",
+                                    "Échec")
+                        return False
+                    else:
+                        sheet.update_cell(ligne, colonne, 1)
+                        st.success("✅ Mise à jour réussie dans Google Sheets !")
+                        log_activity(st.session_state.username, "Enregistrement poly",
+                                    f"ID: {numero_adherent}, Cours: {cours}",
+                                    "Succès")
+                        return True
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                    log_activity(st.session_state.username, "Enregistrement poly",
+                                f"ID: {numero_adherent}, Cours: {cours}, Erreur: {str(e)}",
+                                "Échec")
+                    return False
+            else:
+                st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+                log_activity(st.session_state.username, "Enregistrement poly",
+                            f"ID: {numero_adherent}, Cours: {cours} inexistant",
+                            "Échec")
+                return False
+        else:
+            st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+            log_activity(st.session_state.username, "Enregistrement poly",
+                        f"ID: {numero_adherent} non trouvé", "Échec")
+            return False
+    
+    # Option pour activer l'enregistrement automatique
+    auto_register = st.checkbox("Enregistrement automatique", 
+                              help="Enregistre automatiquement le cours dès qu'un code-barres est détecté")
+    
+    if auto_register:
+        st.info("Mode automatique activé. Le cours sera enregistré dès qu'un code-barres est détecté.")
+        
+        # Vérifier si un nouveau code-barres a été scanné
+        if handle_scan_result():
+            if st.session_state.numero_adherent != st.session_state.last_processed_barcode:
+                st.session_state.last_processed_barcode = st.session_state.numero_adherent
+                
+                # Enregistrer automatiquement le cours
+                if enregistrer_cours(st.session_state.numero_adherent, cours_selectionne):
+                    # Réinitialiser pour le prochain scan
+                    time.sleep(2)  # Donner le temps à l'utilisateur de voir le message de succès
+                    st.session_state.numero_adherent = None
+                    st.rerun()
+    else:
+        # Bouton d'enregistrement manuel
+        if st.button("Enregistrer la récupération du cours"):
+            enregistrer_cours(st.session_state.numero_adherent, cours_selectionne)
+
+
+
+if st.session_state.username in st.session_state.is_admin:
+    tab1, tab2 = st.tabs(["🤓 Interface des tuteurs", "👑 Admin"])
+    with tab1:
+        # Section pour le scanner continu
+        st.subheader("1. Scanner un code-barres")
+        
+        night_mode = st.checkbox("Mode faible luminosité",
+                                help="Activez cette option si vous êtes dans un environnement peu éclairé")
+        
+        scan_tab, upload_tab = st.tabs(["Scanner en continu", "Importer une image"])
+        
+        with scan_tab:
+            # Montrer le statut actuel
+            status_placeholder = st.empty()
+            
+            # Option pour activer/désactiver le scan continu
+            if not st.session_state.continuous_scan_active:
+                if st.button("Activer le scan continu"):
+                    st.session_state.continuous_scan_active = True
+                    st.rerun()
+            else:
+                if st.button("Désactiver le scan continu"):
+                    st.session_state.continuous_scan_active = False
+                    st.rerun()
+            
+            # Afficher le scanner continu s'il est activé
+            if st.session_state.continuous_scan_active:
+                st.markdown("### Scanner en continu")
+                st.markdown("Tenez simplement le code-barres devant la caméra. Le scan se fait automatiquement.")
+                
+                # Créer une URL de callback pour la communication avec le composant
+                callback_url = "/_stcore/component/barcode_callback"
+                
+                # Injecter le composant de scan continu
+                continuous_barcode_scanner(callback_url, night_mode, key="admin_scanner")
+                
+                # Afficher l'état actuel du scanner
+                if st.session_state.numero_adherent:
+                    status_placeholder.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+                else:
+                    status_placeholder.info("En attente de la détection d'un code-barres...")
+        
+        with upload_tab:
+            uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
+                                            type=['jpg', 'jpeg', 'png', 'bmp'],
+                                            key="admin_uploader")
+            
+            if uploaded_file is not None:
+                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                image = cv2.imdecode(file_bytes, 1)
+                decoded_objs, processed_img = scan_barcode(image, night_mode)
+            
+                if decoded_objs:
+                    st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
+                    st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+                    log_activity(st.session_state.username, "Scan de code-barres",
+                                f"ID: {st.session_state.numero_adherent}", "Succès")
+            
+                    if st.checkbox("Afficher l'image traitée", key="admin_show_processed"):
+                        st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
+                else:
+                    st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+                    st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+                    log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
+            
+                    st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
+            
+                    if not night_mode:
+                        st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
         
         st.write("-------------------------------------------------------------------------------------------------------------------------")
         
         st.subheader("2. Sélectionner un cours")
-        #pompompidou
         
         try:
             liste_cours = sheet.row_values(1)
@@ -311,56 +616,34 @@ if st.session_state.username in st.session_state.is_admin:
             log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
             liste_cours = []
         
-        cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
+        cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours, key="admin_course")
+        st.session_state.cours_selectionne = cours_selectionne
         
-        if st.button("Enregistrer la récupération du cours"):
-            if st.session_state.numero_adherent is None:
-                st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
-                log_activity(st.session_state.username, "Enregistrement poly",
-                             f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
-            else:
-                try:
-                    cellule = sheet.find(st.session_state.numero_adherent)
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
-                    log_activity(st.session_state.username, "Recherche adhérent",
-                                 f"ID: {st.session_state.numero_adherent}, Erreur: {str(e)}", "Échec")
-                    cellule = None
+        # Option pour activer l'enregistrement automatique
+        auto_register_admin = st.checkbox("Enregistrement automatique", 
+                                        help="Enregistre automatiquement le cours dès qu'un code-barres est détecté",
+                                        key="admin_auto_register")
         
-                if cellule:
-                    ligne = cellule.row
-                    if cours_selectionne in liste_cours:
-                        colonne = liste_cours.index(cours_selectionne) + 1
-                        try:
-                            current_value = sheet.cell(ligne, colonne).value
+        if auto_register_admin:
+            st.info("Mode automatique activé. Le cours sera enregistré dès qu'un code-barres est détecté.")
+            
+            # Vérifier si un nouveau code-barres a été scanné
+            if handle_scan_result():
+                if st.session_state.numero_adherent != st.session_state.last_processed_barcode:
+                    st.session_state.last_processed_barcode = st.session_state.numero_adherent
+                    
+                    # Enregistrer automatiquement le cours
+                    if enregistrer_cours(st.session_state.numero_adherent, cours_selectionne):
+                        # Réinitialiser pour le prochain scan
+                        time.sleep(2)  # Donner le temps à l'utilisateur de voir le message de succès
+                        st.session_state.numero_adherent = None
+                        st.rerun()
+        else:
+            # Bouton d'enregistrement manuel
+            if st.button("Enregistrer la récupération du cours", key="admin_register_button"):
+                enregistrer_cours(st.session_state.numero_adherent, cours_selectionne)
         
-                            if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
-                                st.error("❌ Cet étudiant a déjà récupéré ce poly.")
-                                log_activity(st.session_state.username, "Enregistrement poly",
-                                             f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Déjà récupéré",
-                                             "Échec")
-                            else:
-                                sheet.update_cell(ligne, colonne, 1)
-                                st.success("✅ Mise à jour réussie dans Google Sheets !")
-                                log_activity(st.session_state.username, "Enregistrement poly",
-                                             f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}",
-                                             "Succès")
-                                #pompompidou
-                        except Exception as e:
-                            st.error(f"❌ Erreur lors de la mise à jour : {e}")
-                            log_activity(st.session_state.username, "Enregistrement poly",
-                                         f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne}, Erreur: {str(e)}",
-                                         "Échec")
-                    else:
-                        st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
-                        log_activity(st.session_state.username, "Enregistrement poly",
-                                     f"ID: {st.session_state.numero_adherent}, Cours: {cours_selectionne} inexistant",
-                                     "Échec")
-                else:
-                    st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
-                    log_activity(st.session_state.username, "Enregistrement poly",
-                                 f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
-        
+    # Le reste du code administrateur reste inchangé
     with tab2:
         if st.session_state.username not in st.session_state.is_admin:
             st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
@@ -673,6 +956,29 @@ if st.session_state.username in st.session_state.is_admin:
                     st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
 #pompompidou
 
+# Endpoint Streamlit pour recevoir les résultats de scan
+# Cette fonction est appelée par le composant JavaScript via fetch
+def barcode_callback():
+    import json
+    from streamlit.web.server.server import Server
+    
+    # Obtenir les données POST
+    request = json.loads(Server.get_current()._session_mgr.get_session_info().websocket_message)
+    if not request:
+        return {"error": "No data received"}
+    
+    # Enregistrer le résultat dans la session state
+    if "scan_results" not in st.session_state:
+        st.session_state.scan_results = []
+    
+    st.session_state.scan_results.append(request)
+    st.session_state.numero_adherent = request.get("barcode")
+    
+    return {"success": True}
+
+# Enregistrer l'endpoint
+Server.get_current()._add_websocket_handler("barcode_callback", barcode_callback)
+
 st.write("-------------------------------------------------------------------------------------------------------------------------")
 user, propos = st.columns(2)
 
@@ -687,7 +993,7 @@ with user:
 with propos:
     with st.expander("À propos"):
         st.write("### CREM - Gestion des polys Tutorat")
-        st.write("Version: 1.0.0")
+        st.write("Version: 1.1.0")
         st.write("Contact: web@crem.fr")
         st.write("<3")
 
