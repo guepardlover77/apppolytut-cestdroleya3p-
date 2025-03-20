@@ -103,7 +103,7 @@ def scan_barcode(image, night_mode=False):
 
 
 # Composant personnalisé pour le scanner de code-barres en continu
-def continuous_barcode_scanner(callback_url, night_mode=False, key=None):
+def continuous_barcode_scanner(callback_url, night_mode=False):
     # Code JavaScript pour scanner en continu
     scanner_html = """
     <div>
@@ -291,15 +291,12 @@ def continuous_barcode_scanner(callback_url, night_mode=False, key=None):
     </div>
     """
     
-    # Générer un ID unique pour ce composant
-    component_id = f"barcode_scanner_{key}"
-    
     # Créer une URL de callback pour ce composant
     if not callback_url:
         callback_url = "/_stcore/stream"
     
-    # Injecter le composant HTML
-    html(scanner_html, height=400, key=component_id)
+    # Injecter le composant HTML (sans utiliser key qui n'est pas supporté)
+    html(scanner_html, height=400)
 
 
 # Pour gérer les résultats du scanner
@@ -400,7 +397,7 @@ if st.session_state.username not in st.session_state.is_admin:
             callback_url = "/_stcore/component/barcode_callback"
             
             # Injecter le composant de scan continu
-            continuous_barcode_scanner(callback_url, night_mode, key="main_scanner")
+                            continuous_barcode_scanner(callback_url, night_mode)
             
             # Afficher l'état actuel du scanner
             if st.session_state.numero_adherent:
@@ -566,7 +563,7 @@ if st.session_state.username in st.session_state.is_admin:
                 callback_url = "/_stcore/component/barcode_callback"
                 
                 # Injecter le composant de scan continu
-                continuous_barcode_scanner(callback_url, night_mode, key="admin_scanner")
+                continuous_barcode_scanner(callback_url, night_mode)
                 
                 # Afficher l'état actuel du scanner
                 if st.session_state.numero_adherent:
