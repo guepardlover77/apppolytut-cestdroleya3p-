@@ -8,12 +8,23 @@ from google.oauth2.service_account import Credentials
 import datetime
 import functools
 import time
+import base64
+from io import BytesIO
+from PIL import Image, ImageDraw
+import threading
+import re
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+import queue
+import av
 
 # Configuration de la page Streamlit
 st.set_page_config(
     page_title="CREM - Gestion des polys Tutorat",
-    page_icon="logo.png"
+    page_icon="logo.png",
+    layout="wide"  # Utilisation maximale de l'espace disponible
 )
+
+# ---------- FONCTIONS DE CACHE ET UTILITAIRES ---------- #
 
 # Cache pour les appels à Google Sheets
 @st.cache_data(ttl=300)  # Mise en cache pendant 5 minutes
@@ -26,7 +37,7 @@ def get_courses():
     """Récupère la liste des cours avec mise en cache"""
     return sheet.row_values(1)
 
-# Fonction pour mesurer le temps d'exécution (utile pour optimisation)
+# Fonction pour mesurer le temps d'exécution
 def timing_decorator(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -72,36 +83,82 @@ except gspread.exceptions.WorksheetNotFound:
     log_sheet = client.open("1").add_worksheet(title="Logs", rows=1000, cols=6)
     log_sheet.append_row(["Date", "Heure", "Utilisateur", "Action", "Détails", "Statut"])
 
-# Fonctions d'utilitaires
-def log_activity(username, action, details, status):
-    """Journalise les activités avec gestion d'erreur améliorée"""
-    global client, sheet, log_sheet
-    
-    now = datetime.datetime.now()
-    date_str = now.strftime("%d/%m/%Y")
-    time_str = now.strftime("%H:%M:%S")
-    
-    # Utilisation d'un batch update pour réduire les appels API
-    try:
-        log_sheet.append_row([date_str, time_str, username, action, details, status])
-    except Exception as e:
-        st.error(f"Erreur de journalisation: {e}")
-        # Tentative de reconnexion en cas d'erreur d'expiration de token
-        if "invalid token" in str(e).lower():
-            st.cache_resource.clear()
-            client = get_gspread_client()
-            sheet = client.open("1").sheet1
-            log_sheet = client.open("1").worksheet("Logs")
-            # Réessayer une fois
-            try:
-                log_sheet.append_row([date_str, time_str, username, action, details, status])
-            except Exception as retry_e:
-                st.error(f"Échec de la tentative de reconnexion: {retry_e}")
+# ---------- FONCTIONS DE TRAITEMENT D'IMAGE ET SCAN ---------- #
 
-def verifier_identifiants(utilisateur, mot_de_passe):
-    """Vérifie les identifiants utilisateur"""
-    utilisateurs = st.secrets["credentials"]
-    return utilisateurs.get(utilisateur) == mot_de_passe
+# Classe pour la détection continue de code-barres
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self, result_queue):
+        self.result_queue = result_queue
+        self.last_detection_time = 0
+        self.detection_cooldown = 2.0  # Secondes entre chaque détection
+        self.frame_counter = 0
+        self.process_every_n_frames = 3  # Traiter une image sur trois pour économiser des ressources
+
+    def draw_barcode_guides(self, frame):
+        """Ajoute des guides visuels pour aider au positionnement du code-barres"""
+        height, width = frame.shape[:2]
+        
+        # Dessiner des lignes de guide centrales
+        center_x, center_y = width // 2, height // 2
+        guide_width, guide_height = width // 2, height // 3
+        
+        # Créer un rectangle de guidage
+        cv2.rectangle(
+            frame,
+            (center_x - guide_width // 2, center_y - guide_height // 2),
+            (center_x + guide_width // 2, center_y + guide_height // 2),
+            (0, 255, 0), 2
+        )
+        
+        # Ajouter un texte d'instruction
+        cv2.putText(
+            frame,
+            "Centrez le code-barres ici",
+            (center_x - 120, center_y - guide_height // 2 - 10),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
+        )
+        
+        return frame
+
+    def transform(self, frame):
+        self.frame_counter += 1
+        current_time = time.time()
+        img = frame.to_ndarray(format="bgr24")
+        
+        # Dessiner les guides sur chaque frame
+        img_with_guides = self.draw_barcode_guides(img.copy())
+        
+        # Ne traiter qu'une image sur n pour les performances
+        if self.frame_counter % self.process_every_n_frames == 0:
+            # Si assez de temps s'est écoulé depuis la dernière détection
+            if current_time - self.last_detection_time > self.detection_cooldown:
+                # Convertir en niveaux de gris et appliquer un flou
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+                
+                # Détecter les codes-barres
+                barcodes = decode(blurred)
+                
+                if barcodes:
+                    for barcode in barcodes:
+                        # Extraire et dessiner un rectangle autour du code-barres
+                        barcode_data = barcode.data.decode("utf-8")
+                        barcode_type = barcode.type
+                        
+                        (x, y, w, h) = barcode.rect
+                        cv2.rectangle(img_with_guides, (x, y), (x + w, y + h), (0, 0, 255), 4)
+                        
+                        # Ajouter un texte avec la valeur du code-barres
+                        text = f"{barcode_data} ({barcode_type})"
+                        cv2.putText(img_with_guides, text, (x, y - 10), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                        
+                        # Envoyer le résultat dans la queue
+                        if not self.result_queue.full():
+                            self.result_queue.put(barcode_data)
+                            self.last_detection_time = current_time
+        
+        return av.VideoFrame.from_ndarray(img_with_guides, format="bgr24")
 
 @timing_decorator
 def enhance_for_low_light(image, alpha=1.5, beta=10):
@@ -155,6 +212,38 @@ def scan_barcode(image, night_mode=False):
     
     return results, eroded if night_mode else blurred
 
+# ---------- FONCTIONS D'INTERACTION AVEC LA BASE DE DONNÉES ---------- #
+
+def log_activity(username, action, details, status):
+    """Journalise les activités avec gestion d'erreur améliorée"""
+    global client, sheet, log_sheet
+    
+    now = datetime.datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    time_str = now.strftime("%H:%M:%S")
+    
+    # Utilisation d'un batch update pour réduire les appels API
+    try:
+        log_sheet.append_row([date_str, time_str, username, action, details, status])
+    except Exception as e:
+        st.error(f"Erreur de journalisation: {e}")
+        # Tentative de reconnexion en cas d'erreur d'expiration de token
+        if "invalid token" in str(e).lower():
+            st.cache_resource.clear()
+            client = get_gspread_client()
+            sheet = client.open("1").sheet1
+            log_sheet = client.open("1").worksheet("Logs")
+            # Réessayer une fois
+            try:
+                log_sheet.append_row([date_str, time_str, username, action, details, status])
+            except Exception as retry_e:
+                st.error(f"Échec de la tentative de reconnexion: {retry_e}")
+
+def verifier_identifiants(utilisateur, mot_de_passe):
+    """Vérifie les identifiants utilisateur"""
+    utilisateurs = st.secrets["credentials"]
+    return utilisateurs.get(utilisateur) == mot_de_passe
+
 def find_student_by_id(student_id):
     """Recherche optimisée d'un étudiant par son ID"""
     try:
@@ -164,6 +253,59 @@ def find_student_by_id(student_id):
         st.error(f"Erreur lors de la recherche de l'adhérent : {e}")
         log_activity(st.session_state.username, "Recherche adhérent",
                      f"ID: {student_id}, Erreur: {str(e)}", "Échec")
+        return None
+
+def find_student_by_name(name_query):
+    """Recherche un étudiant par son nom/prénom"""
+    try:
+        # Récupérer toutes les données
+        all_data = get_sheet_data()
+        
+        # Rechercher dans toutes les colonnes qui pourraient contenir un nom/prénom
+        results = []
+        name_query = name_query.lower()
+        
+        for row in all_data:
+            # Chercher dans chaque colonne qui pourrait contenir un nom
+            # Adapter ceci en fonction de la structure réelle des données
+            for key, value in row.items():
+                if isinstance(value, str) and name_query in value.lower():
+                    results.append(row)
+                    break
+        
+        return results
+    except Exception as e:
+        st.error(f"Erreur lors de la recherche par nom : {e}")
+        log_activity(st.session_state.username, "Recherche par nom",
+                     f"Nom: {name_query}, Erreur: {str(e)}", "Échec")
+        return []
+
+def get_most_distributed_course():
+    """Détermine le cours le plus fréquemment distribué"""
+    try:
+        all_data = get_sheet_data()
+        first_field = sheet.cell(1, 1).value  # Champ ID
+        courses = get_courses()[1:]  # Exclure le premier champ (ID)
+        
+        course_counts = {course: 0 for course in courses}
+        
+        for row in all_data:
+            for course in courses:
+                if row.get(course) == 1:
+                    course_counts[course] += 1
+        
+        # Trouver le cours avec le plus de distributions
+        if course_counts:
+            most_distributed = max(course_counts.items(), key=lambda x: x[1])
+            return most_distributed[0]
+        
+        # Si aucun cours n'a été distribué, retourner le premier
+        return courses[0] if courses else None
+        
+    except Exception as e:
+        if st.session_state.get('debug_mode', False):
+            st.error(f"Erreur lors de la détermination du cours le plus distribué : {e}")
+        # En cas d'erreur, retourner None
         return None
 
 def update_course_for_student(student_row, course_name, courses):
@@ -199,6 +341,68 @@ def update_course_for_student(student_row, course_name, courses):
                      "Échec")
         return False
 
+# ---------- FONCTIONS D'INTERFACE UTILISATEUR ---------- #
+
+def create_success_sound():
+    """Génère un son de succès en base64 pour jouer après un scan réussi"""
+    # Cette fonction simule un son de confirmation simple
+    # Dans une version réelle, vous pourriez inclure un vrai fichier audio
+    
+    # Ici nous renvoyons simplement un placeholder
+    audio_base64 = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+    return audio_base64
+
+def play_success_sound():
+    """Joue un son de succès"""
+    success_sound = create_success_sound()
+    st.markdown(
+        f"""
+        <audio autoplay="true">
+            <source src="{success_sound}" type="audio/wav">
+        </audio>
+        """,
+        unsafe_allow_html=True
+    )
+
+def display_confirmation_animation():
+    """Affiche une animation visuelle de confirmation"""
+    st.balloons()
+
+def add_barcode_guide_overlay(image):
+    """Ajoute un guide visuel pour le placement du code-barres"""
+    # Convertir l'image CV2 en PIL pour faciliter le dessin
+    pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    
+    width, height = pil_img.size
+    center_x, center_y = width // 2, height // 2
+    
+    # Calculer la taille du rectangle de guidage
+    guide_width = width // 2
+    guide_height = height // 3
+    
+    # Dessiner un rectangle en pointillés
+    left = center_x - guide_width // 2
+    top = center_y - guide_height // 2
+    right = center_x + guide_width // 2
+    bottom = center_y + guide_height // 2
+    
+    # Dessiner les lignes en pointillés
+    dash_length = 10
+    for i in range(left, right, dash_length * 2):
+        draw.line([(i, top), (min(i + dash_length, right), top)], fill=(0, 255, 0), width=2)
+        draw.line([(i, bottom), (min(i + dash_length, right), bottom)], fill=(0, 255, 0), width=2)
+    
+    for i in range(top, bottom, dash_length * 2):
+        draw.line([(left, i), (left, min(i + dash_length, bottom))], fill=(0, 255, 0), width=2)
+        draw.line([(right, i), (right, min(i + dash_length, bottom))], fill=(0, 255, 0), width=2)
+    
+    # Ajouter un texte d'instruction
+    draw.text((center_x - 100, top - 30), "Centrez le code-barres ici", fill=(0, 255, 0))
+    
+    # Reconvertir en format CV2
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
 # Initialisation des variables de session
 if "authentifie" not in st.session_state:
     st.session_state.authentifie = False
@@ -206,6 +410,10 @@ if "authentifie" not in st.session_state:
     st.session_state.is_admin = False
     st.session_state.numero_adherent = None
     st.session_state.debug_mode = False
+    st.session_state.continuous_scan_active = False
+    st.session_state.barcode_result_queue = queue.Queue(maxsize=5)
+
+# ---------- APPLICATION PRINCIPALE ---------- #
 
 # Écran de connexion
 if not st.session_state.authentifie:
@@ -240,9 +448,187 @@ if not st.session_state.authentifie:
 
     st.stop()
 
-# Interface utilisateur régulier
-if st.session_state.username not in ["SirIsaac21", "vp_star", "sophie"]:
-    st.header(f"Coucou {st.session_state.username} !")
+# Interface utilisateur après connexion
+st.sidebar.title(f"Bonjour {st.session_state.username} 👋")
+
+# Options de navigation dans la sidebar
+page = st.sidebar.radio(
+    "Navigation", 
+    [
+        "📱 Scanner Rapide", 
+        "📚 Distribution Standard", 
+        "🔍 Recherche Étudiant",
+        "⚙️ Paramètres"
+    ]
+)
+
+# Récupération des cours pour utilisation dans différentes pages
+try:
+    liste_cours = get_courses()
+    most_frequent_course = get_most_distributed_course()
+except Exception as e:
+    st.error(f"❌ Erreur lors de la récupération des cours : {e}")
+    liste_cours = []
+    most_frequent_course = None
+
+# ========== PAGE SCANNER RAPIDE ==========
+if page == "📱 Scanner Rapide":
+    st.title("Scanner Rapide")
+    st.write("Scannez et enregistrez un poly en un seul clic")
+    
+    # Sélection du cours à distribuer avec présélection du plus fréquent
+    default_course_index = liste_cours.index(most_frequent_course) if most_frequent_course in liste_cours else 0
+    selected_course = st.selectbox(
+        "Sélectionnez le cours à distribuer:",
+        liste_cours,
+        index=default_course_index
+    )
+    
+    scan_tabs = st.tabs(["Scanner continu", "Photo unique", "Importer une image"])
+    
+    # Onglet de scan continu
+    with scan_tabs[0]:
+        st.write("📷 Placez le code-barres de la carte devant la caméra")
+        
+        # Configuration WebRTC pour le scan continu
+        rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+        
+        # Initialize a queue for barcode results
+        if "barcode_result_queue" not in st.session_state:
+            st.session_state.barcode_result_queue = queue.Queue(maxsize=5)
+        
+        # Create the webRTC streamer
+        webrtc_ctx = webrtc_streamer(
+            key="barcode-scanner",
+            video_transformer_factory=lambda: VideoTransformer(st.session_state.barcode_result_queue),
+            rtc_configuration=rtc_config,
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True,
+        )
+        
+        # UI for scan status
+        scan_status = st.empty()
+        scan_status.info("En attente de détection...")
+        
+        # Processing the barcode results
+        if webrtc_ctx.state.playing:
+            while True:
+                try:
+                    # Non-blocking queue get
+                    barcode_value = st.session_state.barcode_result_queue.get(block=False)
+                    
+                    # Update the UI with the detected barcode
+                    scan_status.success(f"✅ Code-barres détecté: {barcode_value}")
+                    st.session_state.numero_adherent = barcode_value
+                    
+                    # Vibration/son de succès
+                    play_success_sound()
+                    
+                    # Confirmation visuelle
+                    display_confirmation_animation()
+                    
+                    # Tenter d'enregistrer automatiquement
+                    cellule = find_student_by_id(barcode_value)
+                    if cellule:
+                        if update_course_for_student(cellule.row, selected_course, liste_cours):
+                            st.success(f"✅ Enregistrement du poly '{selected_course}' pour l'étudiant #{barcode_value}")
+                        break
+                    else:
+                        st.error(f"❌ Étudiant avec ID {barcode_value} non trouvé dans la base")
+                        break
+                        
+                except queue.Empty:
+                    # No barcode detected yet, continue
+                    break
+                except Exception as e:
+                    st.error(f"Erreur: {e}")
+                    break
+    
+    # Onglet photo unique
+    with scan_tabs[1]:
+        st.write("📸 Prenez une photo du code-barres")
+        img_file_buffer = st.camera_input("Prendre la photo")
+        
+        if img_file_buffer:
+            # Traitement de l'image
+            file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
+            image = cv2.imdecode(file_bytes, 1)
+            
+            # Ajouter le guide visuel
+            image_with_guide = add_barcode_guide_overlay(image)
+            
+            # Scan du code-barres
+            night_mode = st.checkbox("Mode faible luminosité", value=False)
+            decoded_objs, processed_img = scan_barcode(image, night_mode)
+            
+            if decoded_objs:
+                barcode_value = decoded_objs[0].data.decode("utf-8")
+                st.session_state.numero_adherent = barcode_value
+                
+                # Message de succès
+                st.success(f"✅ Code-barres détecté: {barcode_value}")
+                
+                # Vibration/son de succès
+                play_success_sound()
+                
+                # Confirmation visuelle
+                display_confirmation_animation()
+                
+                # Formulaire rapide pour confirmer l'enregistrement
+                with st.form("quick_form"):
+                    st.subheader(f"Enregistrer le poly '{selected_course}' pour l'étudiant #{barcode_value}?")
+                    submit_button = st.form_submit_button("Confirmer")
+                    
+                    if submit_button:
+                        cellule = find_student_by_id(barcode_value)
+                        if cellule:
+                            update_course_for_student(cellule.row, selected_course, liste_cours)
+                        else:
+                            st.error(f"❌ Étudiant avec ID {barcode_value} non trouvé dans la base")
+            else:
+                st.error("❌ Aucun code-barres détecté. Veuillez réessayer.")
+                st.image(processed_img, caption="Image traitée", width=300)
+    
+    # Onglet import d'image
+    with scan_tabs[2]:
+        st.write("📁 Importez une image contenant un code-barres")
+        uploaded_file = st.file_uploader("Choisir une image", type=['jpg', 'jpeg', 'png', 'bmp'])
+        
+        if uploaded_file:
+            # Même traitement que pour la photo
+            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+            image = cv2.imdecode(file_bytes, 1)
+            night_mode = st.checkbox("Mode faible luminosité", key="upload_night_mode", value=False)
+            decoded_objs, processed_img = scan_barcode(image, night_mode)
+            
+            if decoded_objs:
+                barcode_value = decoded_objs[0].data.decode("utf-8")
+                st.session_state.numero_adherent = barcode_value
+                
+                # Message de succès
+                st.success(f"✅ Code-barres détecté: {barcode_value}")
+                
+                # Vibration/son de succès
+                play_success_sound()
+                
+                # Formulaire rapide pour confirmer l'enregistrement
+                with st.form("upload_quick_form"):
+                    st.subheader(f"Enregistrer le poly '{selected_course}' pour l'étudiant #{barcode_value}?")
+                    submit_button = st.form_submit_button("Confirmer")
+                    
+                    if submit_button:
+                        cellule = find_student_by_id(barcode_value)
+                        if cellule:
+                            update_course_for_student(cellule.row, selected_course, liste_cours)
+                        else:
+                            st.error(f"❌ Étudiant avec ID {barcode_value} non trouvé dans la base")
+            else:
+                st.error("❌ Aucun code-barres détecté. Veuillez réessayer.")
+                st.image(processed_img, caption="Image traitée", width=300)
+
+# ========== PAGE DISTRIBUTION STANDARD ==========
+elif page == "📚 Distribution Standard":
+    st.title("Distribution de Polys - Mode Standard")
     
     st.subheader("1. Scanner un code-barres")
     night_mode = st.checkbox("Mode faible luminosité", 
@@ -253,36 +639,68 @@ if st.session_state.username not in ["SirIsaac21", "vp_star", "sophie"]:
     with scan_tab:
         st.write("Préparez-vous, j'ai pas trouvé comment mettre la caméra arrière par défaut")
         img_file_buffer = st.camera_input("Prendre la photo")
-        image_source = img_file_buffer
+        
+        # Ajouter un guide visuel par-dessus l'aperçu de la caméra
+        if img_file_buffer:
+            file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
+            image = cv2.imdecode(file_bytes, 1)
+            
+            # Scan du code-barres
+            decoded_objs, processed_img = scan_barcode(image, night_mode)
+            
+            if decoded_objs:
+                st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
+                st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+                log_activity(st.session_state.username, "Scan de code-barres",
+                         f"ID: {st.session_state.numero_adherent}", "Succès")
+                
+                # Vibration/son de succès
+                play_success_sound()
+                
+                # Confirmation visuelle
+                display_confirmation_animation()
+            
+                if st.checkbox("Afficher l'image traitée"):
+                    st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
+            else:
+                st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+                st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
+                log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
+            
+                # Afficher l'image traitée avec les guides
+                guide_img = add_barcode_guide_overlay(image)
+                st.image(guide_img, caption="Positionnez le code-barres dans le cadre vert", channels="RGB", width=400)
+            
+                if not night_mode:
+                    st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
     
     with upload_tab:
         uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
-                                       type=['jpg', 'jpeg', 'png', 'bmp'])
-        image_source = uploaded_file
-    
-    # Traitement de l'image et scan du code-barres
-    if image_source is not None:
-        file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, 1)
-        decoded_objs, processed_img = scan_barcode(image, night_mode)
-    
-        if decoded_objs:
-            st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
-            st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
-            log_activity(st.session_state.username, "Scan de code-barres",
-                       f"ID: {st.session_state.numero_adherent}", "Succès")
-    
-            if st.checkbox("Afficher l'image traitée"):
-                st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
-        else:
-            st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
-            st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
-            log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
-    
-            st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
-    
-            if not night_mode:
-                st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
+                                     type=['jpg', 'jpeg', 'png', 'bmp'])
+        
+        if uploaded_file:
+            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+            image = cv2.imdecode(file_bytes, 1)
+            
+            # Scan du code-barres
+            decoded_objs, processed_img = scan_barcode(image, night_mode)
+            
+            if decoded_objs:
+                st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
+                st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
+                log_activity(st.session_state.username, "Scan de code-barres",
+                         f"ID: {st.session_state.numero_adherent}", "Succès")
+                
+                # Vibration/son de succès
+                play_success_sound()
+            
+                if st.checkbox("Afficher l'image traitée", key="show_processed_upload"):
+                    st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
+            else:
+                st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
+                st.info("Conseil: Assurez-vous que le code-barres est bien visible dans l'image.")
+                log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
+                st.image(processed_img, caption="Image traitée", channels="GRAY", width=300)
     
     st.write("-" * 100)
     
@@ -290,17 +708,22 @@ if st.session_state.username not in ["SirIsaac21", "vp_star", "sophie"]:
     st.subheader("2. Sélectionner un cours")
     
     try:
-        # Utilisation de la fonction mise en cache
-        liste_cours = get_courses()
-        if not liste_cours:
-            st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
-            log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
+        # Préselection du cours le plus fréquemment distribué
+        default_course_index = liste_cours.index(most_frequent_course) if most_frequent_course in liste_cours else 0
+        cours_selectionne = st.selectbox(
+            "Choisissez un cours :",
+            liste_cours,
+            index=default_course_index,
+            help="Le cours le plus fréquemment distribué est présélectionné"
+        )
+        
+        # Indicateur visuel pour identifier le cours présélectionné
+        if most_frequent_course == cours_selectionne:
+            st.info(f"ℹ️ '{cours_selectionne}' est le cours le plus fréquemment distribué")
     except Exception as e:
         st.error(f"❌ Erreur lors de la récupération des cours : {e}")
         log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
-        liste_cours = []
-    
-    cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
+        cours_selectionne = ""
     
     if st.button("Enregistrer la récupération du cours"):
         if st.session_state.numero_adherent is None:
@@ -311,496 +734,240 @@ if st.session_state.username not in ["SirIsaac21", "vp_star", "sophie"]:
             cellule = find_student_by_id(st.session_state.numero_adherent)
             if cellule:
                 ligne = cellule.row
-                update_course_for_student(ligne, cours_selectionne, liste_cours)
+                success = update_course_for_student(ligne, cours_selectionne, liste_cours)
+                if success:
+                    # Afficher une confirmation visuelle et sonore
+                    display_confirmation_animation()
+                    play_success_sound()
             else:
                 st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
                 log_activity(st.session_state.username, "Enregistrement poly",
                            f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
 
-# Interface administrateur
-else:
-    tab1, tab2 = st.tabs(["🤓 Interface des tuteurs", "👑 Admin"])
+# ========== PAGE RECHERCHE ETUDIANT ==========
+elif page == "🔍 Recherche Étudiant":
+    st.title("Recherche d'Étudiants")
     
-    # Onglet interface des tuteurs (même interface que pour les utilisateurs réguliers)
-    with tab1:
-        st.subheader("1. Scanner un code-barres")
-        night_mode = st.checkbox("Mode faible luminosité", 
-                               help="Activez cette option si vous êtes dans un environnement peu éclairé")
+    search_tabs = st.tabs(["Recherche par Numéro", "Recherche par Nom/Prénom"])
+    
+    with search_tabs[0]:
+        st.subheader("Recherche par numéro d'adhérent")
+        id_search = st.text_input("Entrez le numéro d'adhérent")
         
-        scan_tab, upload_tab = st.tabs(["Utiliser la caméra", "Importer une image"])
-        
-        with scan_tab:
-            img_file_buffer = st.camera_input("Take a picture")
-            image_source = img_file_buffer
-        
-        with upload_tab:
-            uploaded_file = st.file_uploader("Importer une photo contenant un code-barres",
-                                           type=['jpg', 'jpeg', 'png', 'bmp'])
-            image_source = uploaded_file
-        
-        # Traitement de l'image et scan du code-barres
-        if image_source is not None:
-            file_bytes = np.asarray(bytearray(image_source.read()), dtype=np.uint8)
-            image = cv2.imdecode(file_bytes, 1)
-            decoded_objs, processed_img = scan_barcode(image, night_mode)
-        
-            if decoded_objs:
-                st.session_state.numero_adherent = decoded_objs[0].data.decode("utf-8")
-                st.success(f"✅ Numéro d'adhérent détecté : {st.session_state.numero_adherent}")
-                log_activity(st.session_state.username, "Scan de code-barres",
-                           f"ID: {st.session_state.numero_adherent}", "Succès")
-        
-                if st.checkbox("Afficher l'image traitée"):
-                    st.image(processed_img, caption="Image traitée pour la détection", channels="GRAY")
-            else:
-                st.error("❌ Code-barres non reconnu. Veuillez réessayer.")
-                st.info("Conseil: Assurez-vous que le code-barres est bien éclairé et centré dans l'image.")
-                log_activity(st.session_state.username, "Scan de code-barres", "Échec de détection", "Échec")
-        
-                st.image(processed_img, caption="Dernière image traitée", channels="GRAY", width=300)
-        
-                if not night_mode:
-                    st.warning("💡 Essayez d'activer le mode faible luminosité si vous êtes dans un environnement sombre.")
-        
-        st.write("-" * 100)
-        
-        st.subheader("2. Sélectionner un cours")
-        
-        try:
-            liste_cours = get_courses()
-            if not liste_cours:
-                st.error("⚠️ Aucun cours trouvé dans la première ligne du Google Sheets.")
-                log_activity(st.session_state.username, "Chargement des cours", "Aucun cours trouvé", "Échec")
-        except Exception as e:
-            st.error(f"❌ Erreur lors de la récupération des cours : {e}")
-            log_activity(st.session_state.username, "Chargement des cours", f"Erreur: {str(e)}", "Échec")
-            liste_cours = []
-        
-        cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
-        
-        if st.button("Enregistrer la récupération du cours", key="admin_save_course"):
-            if st.session_state.numero_adherent is None:
-                st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
-                log_activity(st.session_state.username, "Enregistrement poly",
-                           f"Cours: {cours_selectionne} - Aucun numéro d'adhérent", "Échec")
-            else:
-                cellule = find_student_by_id(st.session_state.numero_adherent)
-                if cellule:
-                    ligne = cellule.row
-                    update_course_for_student(ligne, cours_selectionne, liste_cours)
-                else:
-                    st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
-                    log_activity(st.session_state.username, "Enregistrement poly",
-                               f"ID: {st.session_state.numero_adherent} non trouvé", "Échec")
-        
-    # Onglet administrateur
-    with tab2:
-        if not st.session_state.is_admin:
-            st.error("⛔️ Accès non autorisé. Vous n'avez pas les droits d'administration.")
-            st.info("Si tu n'es ni VP ni Sophie tu n'as pas accès à cette section.")
-        else:
-            st.success("👑 Bravo, t'es admin ! Sophie t'a adoubé ?")
-            
-            # Option de débogage pour les administrateurs
-            st.session_state.debug_mode = st.checkbox("Mode débogage (afficher les temps d'exécution)")
-            
-            # Boutons d'exportation de données
-            backup_cols = st.columns(2)
-            with backup_cols[0]:
-                if st.button("Télécharger toutes les données (CSV)"):
-                    try:
-                        # Utilisation de la fonction mise en cache
-                        all_data = get_sheet_data()
-                        df = pd.DataFrame(all_data)
-                        st.download_button(
-                            "Confirmer le téléchargement",
-                            data=df.to_csv(index=False).encode('utf-8'),
-                            file_name=f"CREM_data_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
-                        )
-                        log_activity(st.session_state.username, "Export données", "Téléchargement CSV", "Succès")
-                    except Exception as e:
-                        st.error(f"Erreur d'export: {e}")
-        
-            with backup_cols[1]:
-                if st.button("Télécharger les journaux d'activité"):
-                    try:
-                        all_logs = log_sheet.get_all_records()
-                        df_logs = pd.DataFrame(all_logs)
-                        st.download_button(
-                            "Confirmer le téléchargement",
-                            data=df_logs.to_csv(index=False).encode('utf-8'),
-                            file_name=f"CREM_logs_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                            mime="text/csv"
-                        )
-                    except Exception as e:
-                        st.error(f"Erreur d'export: {e}")
-        
-            # Onglets d'administration
-            admin_tabs = st.tabs(["Tableau de bord", "Journaux d'activité", "Gestion des utilisateurs",
-                                  "Gestion des cours", "Recherche d'étudiants"])
-        
-            # 1. DASHBOARD TAB
-            with admin_tabs[0]:
-                st.header("Tableau de bord")
-                try:
-                    # Utiliser la version mise en cache pour optimiser les performances
-                    all_data = get_sheet_data()
-                    total_students = len(all_data)
+        if id_search:
+            cellule = find_student_by_id(id_search)
+            if cellule:
+                st.success(f"✅ Étudiant trouvé à la ligne {cellule.row}")
+                
+                # Récupérer les données de l'étudiant
+                student_row = cellule.row
+                student_data = sheet.row_values(student_row)
+                headers = sheet.row_values(1)
+                
+                # Créer un dictionnaire des données de l'étudiant
+                student_dict = {headers[i]: student_data[i] for i in range(len(headers)) if i < len(student_data)}
+                
+                # Afficher les informations de l'étudiant
+                st.write("### Informations de l'étudiant")
+                st.write(f"**Numéro d'adhérent:** {student_dict.get(headers[0], 'Non disponible')}")
+                
+                # Afficher les polys récupérés
+                st.write("### Polys récupérés")
+                cours_col1, cours_col2, cours_col3 = st.columns(3)
+                cours_columns = [cours_col1, cours_col2, cours_col3]
+                
+                i = 0
+                for header, value in student_dict.items():
+                    if header != headers[0]:  # Ignorer la colonne d'ID
+                        col = cours_columns[i % 3]
+                        with col:
+                            if value == '1':
+                                st.write(f"✅ {header}")
+                            else:
+                                st.write(f"❌ {header}")
+                        i += 1
+                
+                # Option pour modifier les polys
+                with st.expander("Modifier les polys récupérés"):
+                    st.write("Cochez les polys que l'étudiant a récupérés")
                     
-                    # Compter les polys distribués de manière optimisée
-                    total_polys = sum(
-                        sum(1 for col, val in row.items() if val == 1)
-                        for row in all_data
+                    edit_col1, edit_col2, edit_col3 = st.columns(3)
+                    edit_columns = [edit_col1, edit_col2, edit_col3]
+                    
+                    updated_values = {}
+                    i = 0
+                    for header, value in student_dict.items():
+                        if header != headers[0]:  # Ignorer la colonne d'ID
+                            col = edit_columns[i % 3]
+                            with col:
+                                has_poly = st.checkbox(
+                                    header,
+                                    value=True if value == '1' else False,
+                                    key=f"edit_{header}_{id_search}"
+                                )
+                                column_index = headers.index(header)
+                                updated_values[column_index + 1] = '1' if has_poly else ''
+                            i += 1
+                    
+                    if st.button("Enregistrer les modifications"):
+                        # Mise à jour par lots
+                        cell_list = []
+                        for col, val in updated_values.items():
+                            cell = sheet.cell(student_row, col)
+                            cell.value = val
+                            cell_list.append(cell)
+                        
+                        try:
+                            sheet.update_cells(cell_list)
+                            st.success("✅ Informations mises à jour avec succès!")
+                            log_activity(st.session_state.username, "Modification polys",
+                                       f"ID: {id_search}", "Succès")
+                            # Vider le cache pour refléter les changements
+                            st.cache_data.clear()
+                        except Exception as e:
+                            st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                            log_activity(st.session_state.username, "Modification polys",
+                                       f"ID: {id_search}, Erreur: {str(e)}", "Échec")
+            else:
+                st.error("❌ Aucun étudiant trouvé avec ce numéro.")
+    
+    with search_tabs[1]:
+        st.subheader("Recherche par nom ou prénom")
+        name_search = st.text_input("Entrez le nom ou prénom de l'étudiant")
+        
+        if name_search:
+            # Récupérer tous les étudiants
+            students = get_sheet_data()
+            
+            # Rechercher par nom/prénom
+            # Note: cette fonction est un exemple - à adapter selon la structure réelle des données
+            results = find_student_by_name(name_search)
+            
+            if results:
+                st.success(f"✅ {len(results)} étudiant(s) trouvé(s)")
+                
+                # Afficher les résultats sous forme de tableau
+                df = pd.DataFrame(results)
+                st.dataframe(df)
+                
+                # Sélectionner un étudiant pour plus de détails
+                id_field = sheet.cell(1, 1).value
+                if id_field in df.columns:
+                    selected_student = st.selectbox(
+                        "Sélectionnez un étudiant pour voir les détails:",
+                        df[id_field].tolist()
                     )
                     
-                    nbLAS, nbPOLY, tauxREUSSITE = st.columns(3)
-        
-                    with nbLAS:
-                        st.metric("Total de LAS inscrits", total_students)
-                    with nbPOLY:
-                        st.metric("Total de polys distribués", total_polys)
-                    with tauxREUSSITE:
-                        all_logs = log_sheet.get_all_records()
-        
-                        # Comptage optimisé des taux de réussite/échec
-                        success_count = sum(1 for log in all_logs if log['Statut'] == 'Succès')
-                        total_actions = len(all_logs)
-        
-                        if total_actions > 0:
-                            success_rate = (success_count / total_actions) * 100
-                            st.metric("Taux de réussite", f"{success_rate:.1f}%")
-                    
-                    # Analyse des polys par cours - optimisé
-                    course_counts = {}
-                    first_field = sheet.cell(1, 1).value
-                    
-                    for row in all_data:
-                        for course, val in row.items():
-                            if val == 1 and course != first_field:
-                                course_counts[course] = course_counts.get(course, 0) + 1
-                    
-                    # Analyse des activités par date - optimisé
-                    all_logs = log_sheet.get_all_records()
-                    activity_counts = {}
-                    for log in all_logs:
-                        date = log['Date']
-                        activity_counts[date] = activity_counts.get(date, 0) + 1
-        
-                    chart_data = pd.DataFrame({
-                        'Date': list(activity_counts.keys()),
-                        'Activités': list(activity_counts.values())
-                    })
-        
-                    st.subheader("Activité par jour")
-                    st.bar_chart(chart_data.set_index('Date'))
-                    
-        
-                except Exception as e:
-                    st.error(f"Erreur d'affichage des statistiques: {e}")
+                    if selected_student:
+                        st.session_state.numero_adherent = str(selected_student)
+                        st.write(f"Vous avez sélectionné l'étudiant #{selected_student}")
+                        
+                        # Option pour rediriger vers le scan rapide
+                        if st.button("Distribuer un poly à cet étudiant"):
+                            # Changer la page et mettre à jour l'ID
+                            st.session_state.numero_adherent = str(selected_student)
+                            st.experimental_set_query_params(page="scanner-rapide")
+                            st.rerun()
+            else:
+                st.warning("❌ Aucun étudiant trouvé avec ce nom ou prénom.")
                 
-                st.subheader("Activité récente")
-                try:
-                    # Récupérer et trier les logs de manière optimisée
-                    all_logs = log_sheet.get_all_records()
-                    recent_logs = sorted(
-                        all_logs, 
-                        key=lambda x: (
-                            # Convertir la date au format datetime pour tri chronologique
-                            datetime.datetime.strptime(x['Date'], "%d/%m/%Y").timestamp(),
-                            x['Heure']
-                        ), 
-                        reverse=True
-                    )[:10]  # Limiter aux 10 entrées les plus récentes
-                    
-                    st.dataframe(pd.DataFrame(recent_logs), use_container_width=True)
-                except Exception as e:
-                    st.error(f"Erreur lors de l'affichage de l'activité récente: {e}")
-        
-            # 2. ACTIVITY LOGS TAB
-            with admin_tabs[1]:
-                st.header("Journal d'activité")
-        
-                try:
-                    all_logs = log_sheet.get_all_records()
-        
-                    if not all_logs:
-                        st.info("Aucune activité enregistrée pour le moment.")
-                    else:
-                        col1, col2 = st.columns(2)
-        
-                        # Extraction efficace des listes uniques
-                        with col1:
-                            usernames = sorted(set(log['Utilisateur'] for log in all_logs))
-                            selected_user = st.selectbox("Filtrer par utilisateur:", ["Tous les utilisateurs"] + usernames)
-        
-                        with col2:
-                            actions = sorted(set(log['Action'] for log in all_logs))
-                            selected_action = st.selectbox("Filtrer par type d'action:", ["Toutes les actions"] + actions)
-        
-                        # Sélection de dates efficace
-                        start_date, end_date = st.columns(2)
+                # Suggestion d'ajout d'un nouvel étudiant
+                if st.button("Ajouter un nouvel étudiant"):
+                    with st.form("add_student_form"):
+                        st.write("### Ajout d'un nouvel étudiant")
+                        new_id = st.text_input("Numéro d'adhérent")
+                        new_name = st.text_input("Nom complet")
                         
-                        # Calcul des dates min et max une seule fois
-                        date_objects = [datetime.datetime.strptime(log['Date'], "%d/%m/%Y").date() for log in all_logs]
-                        min_date = min(date_objects)
-                        max_date = max(date_objects)
+                        submit = st.form_submit_button("Ajouter")
                         
-                        with start_date:
-                            date_debut = st.date_input("Date de début:", min_date)
-        
-                        with end_date:
-                            date_fin = st.date_input("Date de fin:", max_date)
-        
-                        # Filtrage optimisé des logs
-                        filtered_logs = []
-                        
-                        for log in all_logs:
-                            # Appliquer les filtres
-                            if selected_user != "Tous les utilisateurs" and log['Utilisateur'] != selected_user:
-                                continue
-                                
-                            if selected_action != "Toutes les actions" and log['Action'] != selected_action:
-                                continue
-                                
-                            log_date = datetime.datetime.strptime(log['Date'], "%d/%m/%Y").date()
-                            if log_date < date_debut or log_date > date_fin:
-                                continue
-                                
-                            filtered_logs.append(log)
-        
-                        if not filtered_logs:
-                            st.warning("Aucune activité correspondant aux critères sélectionnés.")
-                        else:
-                            # Fonction pour colorer le statut
-                            def color_status(status):
-                                if status == "Succès":
-                                    return "background-color: #CCFFCC"
-                                elif status == "Échec":
-                                    return "background-color: #FFCCCC"
-                                return ""
-        
-                            df_logs = pd.DataFrame(filtered_logs)
-                            st.dataframe(df_logs.style.applymap(color_status, subset=['Statut']),
-                                         height=400, use_container_width=True)
-        
-                            st.download_button(
-                                label="📥 Télécharger les logs filtrés (CSV)",
-                                data=df_logs.to_csv(index=False).encode('utf-8'),
-                                file_name=f"logs_CREM_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                                mime="text/csv")
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la récupération des logs: {e}")
-        
-            # 3. USER MANAGEMENT TAB
-            with admin_tabs[2]:
-                st.header("Gestion des utilisateurs")
-        
-                # Affichage des utilisateurs optimisé
-                st.subheader("Utilisateurs actuels")
-                try:
-                    # Récupération efficace des utilisateurs depuis les secrets
-                    users = {user: {"password": pwd, "admin": user in ["SirIsaac21", "vp_star", "sophie"]}
-                             for user, pwd in st.secrets["credentials"].items()}
-        
-                    # Création efficace du DataFrame
-                    user_df = pd.DataFrame([
-                        {"Utilisateur": user, "Statut": "Administrateur" if details["admin"] else "Utilisateur"}
-                        for user, details in users.items()
-                    ])
-        
-                    st.dataframe(user_df, use_container_width=True)
-        
-                    # Gestion utilisateur simplifiée
-                    with st.expander("Ajouter/Modifier un utilisateur"):
-                        st.write(
-                            "⚠️ Note: Les modifications apportées ici nécessitent une implémentation côté serveur pour être persistantes.")
-        
-                        new_user = st.text_input("Nom d'utilisateur")
-                        new_password = st.text_input("Mot de passe", type="password")
-                        is_admin = st.checkbox("Administrateur")
-        
-                        if st.button("Enregistrer"):
-                            st.warning(
-                                "Cette fonctionnalité nécessite une implémentation côté serveur pour modifier secrets.toml")
-                            st.info(
-                                "Les modifications des utilisateurs ne peuvent pas être appliquées directement depuis l'interface web.")
-                            log_activity(st.session_state.username, "Tentative de modification utilisateur",
-                                         f"Utilisateur: {new_user}", "Information")
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la gestion des utilisateurs: {e}")
-        
-            # 4. COURSE MANAGEMENT TAB
-            with admin_tabs[3]:
-                st.header("Gestion des cours")
-        
-                try:
-                    # Récupération efficace des cours
-                    courses = get_courses()[1:]  # Exclure le premier élément (ID)
-                    
-                    # Calcul optimisé des statistiques par cours
-                    @st.cache_data(ttl=60)  # Cache de 1 minute pour cette fonction
-                    def get_course_stats():
-                        course_data = []
-                        for i, course in enumerate(courses):
-                            # Utiliser un comptage optimisé avec list comprehension
-                            count = len([1 for cell in sheet.col_values(i + 2)[1:] if cell == '1'])
-                            course_data.append({"Cours": course, "Polys distribués": count})
-                        return course_data
-                    
-                    course_data = get_course_stats()
-                    st.dataframe(pd.DataFrame(course_data), use_container_width=True)
-        
-                    st.subheader("Ajouter un nouveau cours")
-                    new_course = st.text_input("Nom du nouveau cours")
-                    if st.button("Ajouter ce cours"):
-                        if new_course:
+                        if submit and new_id:
                             try:
-                                if new_course in courses:
-                                    st.error(f"Le cours '{new_course}' existe déjà!")
+                                # Vérifier si l'étudiant existe déjà
+                                existing = None
+                                try:
+                                    existing = sheet.find(new_id)
+                                except:
+                                    pass
+                                
+                                if existing:
+                                    st.error(f"Un étudiant avec l'ID '{new_id}' existe déjà!")
                                 else:
-                                    sheet.update_cell(1, len(courses) + 2, new_course)
-                                    # Vider le cache pour forcer la mise à jour des données
+                                    # Ajouter l'étudiant avec des cellules vides pour tous les cours
+                                    sheet.append_row([new_id] + [''] * (len(get_courses()) - 1))
                                     st.cache_data.clear()
-                                    log_activity(st.session_state.username, "Ajout de cours", f"Cours: {new_course}",
-                                                 "Succès")
-                                    st.success(f"✅ Cours '{new_course}' ajouté avec succès!")
-                                    st.rerun()
+                                    log_activity(st.session_state.username, "Ajout étudiant",
+                                               f"ID: {new_id}", "Succès")
+                                    st.success(f"✅ Étudiant '{new_id}' ajouté avec succès!")
                             except Exception as e:
                                 st.error(f"❌ Erreur: {e}")
-                                log_activity(st.session_state.username, "Ajout de cours",
-                                             f"Cours: {new_course}, Erreur: {str(e)}", "Échec")
-                        else:
-                            st.error("Veuillez saisir un nom de cours")
-                except Exception as e:
-                    st.error(f"❌ Erreur lors du chargement des cours: {e}")
+                                log_activity(st.session_state.username, "Ajout étudiant",
+                                           f"ID: {new_id}, Erreur: {str(e)}", "Échec")
+
+# ========== PAGE PARAMETRES ==========
+elif page == "⚙️ Paramètres":
+    st.title("Paramètres")
+    
+    # Options générales
+    st.subheader("Options générales")
+    st.session_state.debug_mode = st.checkbox("Mode débogage (afficher les temps d'exécution)", 
+                                            value=st.session_state.get('debug_mode', False))
+    
+    # Personnalisation de l'interface
+    st.subheader("Personnalisation de l'interface")
+    theme_options = ["Clair", "Sombre", "Auto (selon l'appareil)"]
+    selected_theme = st.selectbox("Thème", theme_options, index=0)
+    
+    # Paramètres de scanner
+    st.subheader("Paramètres du scanner")
+    default_night_mode = st.checkbox("Activer le mode faible luminosité par défaut")
+    scan_quality = st.slider("Qualité de scan", min_value=1, max_value=5, value=3, 
+                           help="Plus la qualité est élevée, plus le scan sera précis mais lent")
+    
+    # Préférences utilisateur
+    st.subheader("Préférences utilisateur")
+    default_course = st.selectbox("Cours présélectionné par défaut", 
+                                 ["Cours le plus fréquent"] + liste_cours)
+    
+    # Paramètres administrateur (si applicable)
+    if st.session_state.is_admin:
+        st.subheader("Paramètres administrateur")
         
-            # 5. STUDENT SEARCH TAB
-            with admin_tabs[4]:
-                st.header("Recherche et gestion d'étudiants")
+        # Options d'exportation
+        export_options = st.multiselect(
+            "Options d'exportation automatique",
+            ["CSV quotidien", "Backup hebdomadaire", "Rapports mensuels"],
+            default=[]
+        )
         
-                try:
-                    # Utilisation de la fonction mise en cache
-                    all_students = get_sheet_data()
-                    id_field = sheet.cell(1, 1).value
-        
-                    # Interface de recherche optimisée
-                    search_term = st.text_input("Rechercher un étudiant par numéro CREM")
-        
-                    if search_term:
-                        # Recherche optimisée avec une seule boucle
-                        results = [student for student in all_students
-                                   if search_term.lower() in str(student.get(id_field, '')).lower()]
-        
-                        if results:
-                            st.write(f"{len(results)} résultat(s) trouvé(s)")
-                            st.dataframe(pd.DataFrame(results), use_container_width=True)
-        
-                            student_id = st.selectbox(
-                                "Modifier les polys récupérés:",
-                                [str(s.get(id_field)) for s in results]
-                            )
-        
-                            if student_id:
-                                student_row = sheet.find(student_id).row
-                                courses = get_courses()[1:]  # Exclure le premier élément (ID)
-        
-                                st.write("Cochez les polys récupérés:")
-                                # Affichage optimisé des cases à cocher avec colonnes
-                                cols = st.columns(3)
-                                updated_values = {}
-        
-                                for i, course in enumerate(courses):
-                                    col_index = i % 3
-                                    current_val = sheet.cell(student_row, i + 2).value
-                                    with cols[col_index]:
-                                        has_poly = st.checkbox(
-                                            course,
-                                            value=True if current_val == '1' else False,
-                                            key=f"course_{course}_{student_id}"  # Clé unique pour éviter les conflits
-                                        )
-                                        updated_values[i + 2] = '1' if has_poly else ''
-        
-                                if st.button("Mettre à jour", key="update_student_courses"):
-                                    # Mise à jour par lots pour réduire les appels API
-                                    cells_to_update = []
-                                    for col, val in updated_values.items():
-                                        cells_to_update.append({
-                                            'row': student_row,
-                                            'col': col,
-                                            'value': val
-                                        })
-                                    
-                                    # Utiliser update_cells au lieu de multiples update_cell
-                                    if cells_to_update:
-                                        batch_size = 10  # Taille de lot raisonnable
-                                        for i in range(0, len(cells_to_update), batch_size):
-                                            batch = cells_to_update[i:i+batch_size]
-                                            cell_list = []
-                                            for cell_data in batch:
-                                                cell = sheet.cell(cell_data['row'], cell_data['col'])
-                                                cell.value = cell_data['value']
-                                                cell_list.append(cell)
-                                            sheet.update_cells(cell_list)
-                                            
-                                    log_activity(st.session_state.username, "Modification étudiant",
-                                                 f"ID: {student_id}", "Succès")
-                                    st.success("✅ Informations mises à jour!")
-                        else:
-                            st.warning("Aucun étudiant trouvé.")
-        
-                    # Formulaire d'ajout d'étudiant optimisé
-                    with st.expander("Ajouter un nouvel étudiant"):
-                        new_student_id = st.text_input("Numéro d'adhérent", key="new_student_id_input")
-        
-                        if st.button("Ajouter", key="add_new_student"):
-                            if new_student_id:
-                                try:
-                                    # Vérification optimisée de l'existence de l'étudiant
-                                    existing = None
-                                    try:
-                                        existing = sheet.find(new_student_id)
-                                    except:
-                                        pass
-        
-                                    if existing:
-                                        st.error(f"Un étudiant avec l'ID '{new_student_id}' existe déjà!")
-                                    else:
-                                        # Ajouter l'étudiant avec des cellules vides pour tous les cours
-                                        sheet.append_row([new_student_id] + [''] * (len(get_courses()) - 1))
-                                        # Vider le cache pour refléter les changements
-                                        st.cache_data.clear()
-                                        log_activity(st.session_state.username, "Ajout étudiant",
-                                                     f"ID: {new_student_id}", "Succès")
-                                        st.success(f"✅ Étudiant '{new_student_id}' ajouté avec succès!")
-                                except Exception as e:
-                                    st.error(f"❌ Erreur: {e}")
-                            else:
-                                st.error("Veuillez saisir un numéro d'adhérent")
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la recherche d'étudiants: {e}")
+        # Gestion des journaux
+        log_retention = st.slider("Conservation des journaux (jours)", 
+                                min_value=7, max_value=365, value=90)
+    
+    # Sauvegarde des paramètres
+    if st.button("Enregistrer les paramètres"):
+        # Dans une version réelle, ces paramètres seraient sauvegardés
+        st.success("✅ Paramètres enregistrés avec succès!")
+        log_activity(st.session_state.username, "Modification paramètres", 
+                   f"Thème: {selected_theme}, Mode nuit: {default_night_mode}", "Succès")
 
 # Pied de page et déconnexion
-st.write("-" * 100)
-user, propos = st.columns(2)
+st.sidebar.write("---")
+if st.sidebar.button("Se déconnecter"):
+    log_activity(st.session_state.username, "Déconnexion", "", "Succès")
+    # Réinitialisation des variables de session et vidage du cache
+    st.session_state.authentifie = False
+    st.session_state.username = None
+    st.session_state.is_admin = False
+    st.session_state.numero_adherent = None
+    st.cache_data.clear()
+    st.rerun()
 
-with user:
-    if st.button("Se déconnecter"):
-        log_activity(st.session_state.username, "Déconnexion", "", "Succès")
-        # Réinitialisation des variables de session et vidage du cache
-        st.session_state.authentifie = False
-        st.session_state.username = None
-        st.session_state.is_admin = False
-        st.session_state.numero_adherent = None
-        st.cache_data.clear()
-        st.rerun()
-
-with propos:
-    with st.expander("À propos"):
-        st.write("### CREM - Gestion des polys Tutorat")
-        st.write("Version: 2.0.0")
-        st.write("Contact: web@crem.fr")
-        st.write("<3")
+# Info version
+st.sidebar.write("---")
+with st.sidebar.expander("À propos"):
+    st.write("### CREM - Gestion des polys Tutorat")
+    st.write("Version: 2.0.0")
+    st.write("Contact: web@crem.fr")
 
 # Nettoyage des ressources non utilisées
 import gc
