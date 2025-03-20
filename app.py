@@ -410,7 +410,9 @@ if "authentifie" not in st.session_state:
     st.session_state.is_admin = False
     st.session_state.numero_adherent = None
     st.session_state.debug_mode = False
-    st.session_state.continuous_scan_active = False
+
+# Assurons-nous que la file de résultats des codes-barres est initialisée
+if "barcode_result_queue" not in st.session_state:
     st.session_state.barcode_result_queue = queue.Queue(maxsize=5)
 
 # ---------- APPLICATION PRINCIPALE ---------- #
@@ -493,11 +495,12 @@ if page == "📱 Scanner Rapide":
         # Configuration WebRTC pour le scan continu
         rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
         
-        # Initialize a queue for barcode results
+        # S'assurer que la file d'attente pour les résultats de code-barres est initialisée
         if "barcode_result_queue" not in st.session_state:
             st.session_state.barcode_result_queue = queue.Queue(maxsize=5)
         
         # Create the webRTC streamer
+        webrtc_ctx = webrtc_streamer(
         webrtc_ctx = webrtc_streamer(
             key="barcode-scanner",
             video_transformer_factory=lambda: VideoTransformer(st.session_state.barcode_result_queue),
