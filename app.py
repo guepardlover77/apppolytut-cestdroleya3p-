@@ -87,12 +87,14 @@ except gspread.exceptions.WorksheetNotFound:
 
 # Classe pour la détection continue de code-barres
 class VideoTransformer(VideoTransformerBase):
-    def __init__(self, result_queue):
-        self.result_queue = result_queue
+    def __init__(self):
+        # N'utilisons pas la queue via session_state dans le constructeur
         self.last_detection_time = 0
         self.detection_cooldown = 2.0  # Secondes entre chaque détection
         self.frame_counter = 0
         self.process_every_n_frames = 3  # Traiter une image sur trois pour économiser des ressources
+        self.last_detected_barcode = None
+
 
     def draw_barcode_guides(self, frame):
         """Ajoute des guides visuels pour aider au positionnement du code-barres"""
@@ -153,10 +155,9 @@ class VideoTransformer(VideoTransformerBase):
                         cv2.putText(img_with_guides, text, (x, y - 10), 
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                         
-                        # Envoyer le résultat dans la queue
-                        if not self.result_queue.full():
-                            self.result_queue.put(barcode_data)
-                            self.last_detection_time = current_time
+                        # Stocker le dernier code-barres détecté
+                        self.last_detected_barcode = barcode_data
+                        self.last_detection_time = current_time
         
         return av.VideoFrame.from_ndarray(img_with_guides, format="bgr24")
 
@@ -500,6 +501,7 @@ if page == "📱 Scanner Rapide":
             st.session_state.barcode_result_queue = queue.Queue(maxsize=5)
         
         # Create the webRTC streamer
+        webrtc_ctx = webrtc_streamer(
         webrtc_ctx = webrtc_streamer(
             key="barcode-scanner",
             video_transformer_factory=lambda: VideoTransformer(st.session_state.barcode_result_queue),
