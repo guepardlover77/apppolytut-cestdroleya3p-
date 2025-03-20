@@ -8,3 +8,4 @@ protobuf
 pyzbar
 pandas
 python-telegram-bot
+streamlit-webrtc
