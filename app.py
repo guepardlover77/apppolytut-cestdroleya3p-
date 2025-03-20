@@ -75,6 +75,8 @@ except gspread.exceptions.WorksheetNotFound:
 # Fonctions d'utilitaires
 def log_activity(username, action, details, status):
     """Journalise les activités avec gestion d'erreur améliorée"""
+    global client, sheet, log_sheet
+    
     now = datetime.datetime.now()
     date_str = now.strftime("%d/%m/%Y")
     time_str = now.strftime("%H:%M:%S")
@@ -86,7 +88,6 @@ def log_activity(username, action, details, status):
         st.error(f"Erreur de journalisation: {e}")
         # Tentative de reconnexion en cas d'erreur d'expiration de token
         if "invalid token" in str(e).lower():
-            global client, sheet, log_sheet
             st.cache_resource.clear()
             client = get_gspread_client()
             sheet = client.open("1").sheet1
