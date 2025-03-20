@@ -164,7 +164,7 @@ def continuous_barcode_scanner(callback_url, night_mode=False):
                     
                     decodeFromStream();
                 } catch (err) {
-                    statusElement.textContent = 'Erreur d\'accès à la caméra: ' + err;
+                    statusElement.textContent = 'Erreur d\\'accès à la caméra: ' + err;
                     console.error(err);
                 }
             }
@@ -363,6 +363,61 @@ if "numero_adherent" not in st.session_state:
     st.session_state.numero_adherent = None
 
 
+# Fonction pour enregistrer automatiquement
+def enregistrer_cours(numero_adherent, cours):
+    if not numero_adherent:
+        st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
+        log_activity(st.session_state.username, "Enregistrement poly",
+                    f"Cours: {cours} - Aucun numéro d'adhérent", "Échec")
+        return False
+    
+    try:
+        cellule = sheet.find(numero_adherent)
+    except Exception as e:
+        st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
+        log_activity(st.session_state.username, "Recherche adhérent",
+                    f"ID: {numero_adherent}, Erreur: {str(e)}", "Échec")
+        return False
+
+    if cellule:
+        ligne = cellule.row
+        if cours in liste_cours:
+            colonne = liste_cours.index(cours) + 1
+            try:
+                current_value = sheet.cell(ligne, colonne).value
+
+                if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
+                    st.error("❌ Cet étudiant a déjà récupéré ce poly.")
+                    log_activity(st.session_state.username, "Enregistrement poly",
+                                f"ID: {numero_adherent}, Cours: {cours}, Déjà récupéré",
+                                "Échec")
+                    return False
+                else:
+                    sheet.update_cell(ligne, colonne, 1)
+                    st.success("✅ Mise à jour réussie dans Google Sheets !")
+                    log_activity(st.session_state.username, "Enregistrement poly",
+                                f"ID: {numero_adherent}, Cours: {cours}",
+                                "Succès")
+                    return True
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la mise à jour : {e}")
+                log_activity(st.session_state.username, "Enregistrement poly",
+                            f"ID: {numero_adherent}, Cours: {cours}, Erreur: {str(e)}",
+                            "Échec")
+                return False
+        else:
+            st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
+            log_activity(st.session_state.username, "Enregistrement poly",
+                        f"ID: {numero_adherent}, Cours: {cours} inexistant",
+                        "Échec")
+            return False
+    else:
+        st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
+        log_activity(st.session_state.username, "Enregistrement poly",
+                    f"ID: {numero_adherent} non trouvé", "Échec")
+        return False
+
+
 if st.session_state.username not in st.session_state.is_admin:
     st.header(f"Coucou {st.session_state.username} !")
 
@@ -397,7 +452,7 @@ if st.session_state.username not in st.session_state.is_admin:
             callback_url = "/_stcore/component/barcode_callback"
             
             # Injecter le composant de scan continu
-                            continuous_barcode_scanner(callback_url, night_mode)
+            continuous_barcode_scanner(callback_url, night_mode)
             
             # Afficher l'état actuel du scanner
             if st.session_state.numero_adherent:
@@ -435,7 +490,6 @@ if st.session_state.username not in st.session_state.is_admin:
     st.write("-------------------------------------------------------------------------------------------------------------------------")
     
     st.subheader("2. Sélectionner un cours")
-    #pompompidou
     
     try:
         liste_cours = sheet.row_values(1)
@@ -449,60 +503,6 @@ if st.session_state.username not in st.session_state.is_admin:
     
     cours_selectionne = st.selectbox("Choisissez un cours :", liste_cours)
     st.session_state.cours_selectionne = cours_selectionne
-    
-    # Fonction pour enregistrer automatiquement
-    def enregistrer_cours(numero_adherent, cours):
-        if not numero_adherent:
-            st.error("❌ Aucun numéro d'adhérent détecté. Veuillez scanner un code-barres.")
-            log_activity(st.session_state.username, "Enregistrement poly",
-                        f"Cours: {cours} - Aucun numéro d'adhérent", "Échec")
-            return False
-        
-        try:
-            cellule = sheet.find(numero_adherent)
-        except Exception as e:
-            st.error(f"❌ Erreur lors de la recherche de l'adhérent : {e}")
-            log_activity(st.session_state.username, "Recherche adhérent",
-                        f"ID: {numero_adherent}, Erreur: {str(e)}", "Échec")
-            return False
-
-        if cellule:
-            ligne = cellule.row
-            if cours in liste_cours:
-                colonne = liste_cours.index(cours) + 1
-                try:
-                    current_value = sheet.cell(ligne, colonne).value
-
-                    if current_value and str(current_value).strip() and int(float(current_value)) >= 1:
-                        st.error("❌ Cet étudiant a déjà récupéré ce poly.")
-                        log_activity(st.session_state.username, "Enregistrement poly",
-                                    f"ID: {numero_adherent}, Cours: {cours}, Déjà récupéré",
-                                    "Échec")
-                        return False
-                    else:
-                        sheet.update_cell(ligne, colonne, 1)
-                        st.success("✅ Mise à jour réussie dans Google Sheets !")
-                        log_activity(st.session_state.username, "Enregistrement poly",
-                                    f"ID: {numero_adherent}, Cours: {cours}",
-                                    "Succès")
-                        return True
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la mise à jour : {e}")
-                    log_activity(st.session_state.username, "Enregistrement poly",
-                                f"ID: {numero_adherent}, Cours: {cours}, Erreur: {str(e)}",
-                                "Échec")
-                    return False
-            else:
-                st.error("⚠️ Le cours sélectionné n'existe pas dans la feuille.")
-                log_activity(st.session_state.username, "Enregistrement poly",
-                            f"ID: {numero_adherent}, Cours: {cours} inexistant",
-                            "Échec")
-                return False
-        else:
-            st.error("❌ Numéro d'adhérent non trouvé dans la base de données.")
-            log_activity(st.session_state.username, "Enregistrement poly",
-                        f"ID: {numero_adherent} non trouvé", "Échec")
-            return False
     
     # Option pour activer l'enregistrement automatique
     auto_register = st.checkbox("Enregistrement automatique", 
@@ -526,7 +526,6 @@ if st.session_state.username not in st.session_state.is_admin:
         # Bouton d'enregistrement manuel
         if st.button("Enregistrer la récupération du cours"):
             enregistrer_cours(st.session_state.numero_adherent, cours_selectionne)
-
 
 
 if st.session_state.username in st.session_state.is_admin:
